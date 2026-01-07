@@ -28,7 +28,7 @@ brews:
     description: "Modern Xcode CLI + TUI"
     homepage: "https://github.com/vburojevic/xcbolt"
     license: "MIT"
-    folder: Formula
+    directory: Formula
     install: |
       bin.install "xcbolt"
     test: |
