@@ -24,14 +24,14 @@ This project is intentionally **self-contained** and uses Apple tooling via `xcr
 ## Installation (Homebrew)
 
 ```bash
-brew tap vburojevic/xcbolt
+brew tap vburojevic/tap
 brew install xcbolt
 ```
 
 Or in one line:
 
 ```bash
-brew install vburojevic/xcbolt/xcbolt
+brew install vburojevic/tap/xcbolt
 ```
 
 ---
