@@ -265,11 +265,13 @@ type HintItem struct {
 func NewHintsBar() HintsBar {
 	return HintsBar{
 		Hints: []HintItem{
-			{Key: "Tab", Desc: "focus"},
-			{Key: "^B", Desc: "sidebar"},
+			{Key: "b", Desc: "build"},
+			{Key: "r", Desc: "run"},
+			{Key: "t", Desc: "test"},
+			{Key: "s", Desc: "scheme"},
+			{Key: "d", Desc: "dest"},
 			{Key: "^K", Desc: "commands"},
 			{Key: "?", Desc: "help"},
-			{Key: "q", Desc: "quit"},
 		},
 	}
 }

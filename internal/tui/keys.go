@@ -47,9 +47,7 @@ type keyMap struct {
 	Refresh key.Binding
 
 	// Layout
-	ToggleSidebar key.Binding
-	SwitchFocus   key.Binding
-	Search        key.Binding
+	Search key.Binding
 
 	// Viewport/Scroll
 	ScrollUp         key.Binding
@@ -131,14 +129,6 @@ func defaultKeyMap() keyMap {
 		),
 
 		// Layout
-		ToggleSidebar: key.NewBinding(
-			key.WithKeys("ctrl+b"),
-			key.WithHelp("^B", "toggle sidebar"),
-		),
-		SwitchFocus: key.NewBinding(
-			key.WithKeys("tab"),
-			key.WithHelp("Tab", "switch focus"),
-		),
 		Search: key.NewBinding(
 			key.WithKeys("ctrl+f", "/"),
 			key.WithHelp("^F", "search logs"),
@@ -210,12 +200,10 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Build, k.Run, k.Test, k.Clean, k.Stop},
 		// Configuration row
 		{k.Scheme, k.Destination, k.Palette, k.Init},
-		// Layout row
-		{k.SwitchFocus, k.ToggleSidebar, k.Search},
 		// Scrolling row
 		{k.ScrollUp, k.ScrollDown, k.ScrollTop, k.ScrollBottom, k.ToggleAutoFollow},
 		// Other row
-		{k.Refresh, k.Cancel, k.Help, k.Quit},
+		{k.Refresh, k.Search, k.Cancel, k.Help, k.Quit},
 	}
 }
 
@@ -238,5 +226,5 @@ func (k keyMap) ActionHints() []struct {
 
 // FooterHints returns the hints for the footer bar
 func (k keyMap) FooterHints() string {
-	return "s:scheme  d:dest  ?:help  q:quit"
+	return "b:build  r:run  t:test  s:scheme  d:dest  ^K:commands  ?:help"
 }

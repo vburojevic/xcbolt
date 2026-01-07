@@ -77,9 +77,8 @@ type Model struct {
 	mode         Mode
 	selectorType SelectorType
 
-	// Layout components (new)
+	// Layout components
 	layout      Layout
-	sidebar     Sidebar
 	statusBar   StatusBar
 	progressBar ProgressBar
 	hintsBar    HintsBar
@@ -134,9 +133,8 @@ func NewModel(projectRoot string, configPath string) Model {
 	// Load user state (ignore errors - use defaults if not found)
 	state, _ := core.LoadState()
 
-	// Initialize new layout components
+	// Initialize layout components
 	layout := NewLayout()
-	sidebar := NewSidebar()
 	statusBar := NewStatusBar()
 	progressBar := NewProgressBar()
 	hintsBar := NewHintsBar()
@@ -154,9 +152,8 @@ func NewModel(projectRoot string, configPath string) Model {
 		autoFollow:  true,
 		mode:        ModeNormal,
 		state:       state,
-		// New layout components
+		// Layout components
 		layout:      layout,
-		sidebar:     sidebar,
 		statusBar:   statusBar,
 		progressBar: progressBar,
 		hintsBar:    hintsBar,
@@ -217,10 +214,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update layout dimensions
 		m.layout.SetSize(m.width, m.height)
 		m.updateViewportSize()
-		// Update sidebar dimensions
-		m.sidebar.Width = m.layout.SidebarWidth
-		m.sidebar.Height = m.layout.SidebarHeight()
-		m.sidebar.Compact = m.layout.SidebarCollapse
 		if m.mode == ModeWizard {
 			m.wizard = newWizard(m.info, m.cfg, m.width)
 		}
@@ -494,57 +487,8 @@ func (m *Model) updateViewportSize() {
 	m.viewport.Height = maxInt(0, m.layout.ContentHeight()-2)
 }
 
-// executeSidebarItem executes the currently selected sidebar item
-func (m *Model) executeSidebarItem() tea.Cmd {
-	item := m.sidebar.SelectedItem()
-	if item == nil {
-		return nil
-	}
-
-	switch item.ID {
-	case "build":
-		if !m.running {
-			return m.startOp("build")
-		}
-	case "run":
-		if !m.running {
-			return m.startOp("run")
-		}
-	case "test":
-		if !m.running {
-			return m.startOp("test")
-		}
-	case "clean":
-		if !m.running {
-			return m.startOp("clean")
-		}
-	case "scheme":
-		m.openSchemeSelector()
-	case "destination":
-		m.openDestinationSelector()
-	}
-
-	return nil
-}
-
-// syncSidebarState syncs the sidebar display with current model state
-func (m *Model) syncSidebarState() {
-	// Update config values
-	scheme := m.cfg.Scheme
-	if scheme == "" {
-		scheme = "Not set"
-	}
-	m.sidebar.SetConfigValue("scheme", scheme)
-
-	dest := "Not set"
-	if m.cfg.Destination.Name != "" {
-		dest = m.cfg.Destination.Name
-	} else if m.cfg.Destination.Kind != "" {
-		dest = string(m.cfg.Destination.Kind)
-	}
-	m.sidebar.SetConfigValue("destination", dest)
-
-	// Update status bar
+// syncStatusBarState syncs the status bar display with current model state
+func (m *Model) syncStatusBarState() {
 	m.statusBar.Scheme = m.cfg.Scheme
 	m.statusBar.Destination = m.cfg.Destination.Name
 	m.statusBar.DestOS = m.cfg.Destination.OS
@@ -552,9 +496,6 @@ func (m *Model) syncSidebarState() {
 	m.statusBar.RunningCmd = m.runningCmd
 	m.statusBar.Stage = m.currentStage
 	m.statusBar.Progress = m.stageProgress
-
-	// Update sidebar focus
-	m.sidebar.Focused = m.layout.IsFocused(PaneSidebar)
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
@@ -616,19 +557,6 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 			m.setStatus("Canceled")
 		}
 
-	// Sidebar navigation when focused
-	case keyMatches(msg, m.keys.ScrollUp) && m.layout.IsFocused(PaneSidebar):
-		m.sidebar.MoveUp()
-		return nil
-
-	case keyMatches(msg, m.keys.ScrollDown) && m.layout.IsFocused(PaneSidebar):
-		m.sidebar.MoveDown()
-		return nil
-
-	case keyMatches(msg, m.keys.SelectEnter) && m.layout.IsFocused(PaneSidebar):
-		// Execute selected sidebar item
-		return m.executeSidebarItem()
-
 	case keyMatches(msg, m.keys.Build):
 		if !m.running {
 			return m.startOp("build")
@@ -679,14 +607,6 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.ScrollBottom):
 		m.viewport.GotoBottom()
 		m.autoFollow = true
-
-	case keyMatches(msg, m.keys.ToggleSidebar):
-		m.layout.ToggleSidebar()
-		m.updateViewportSize()
-
-	case keyMatches(msg, m.keys.SwitchFocus):
-		m.layout.SwitchFocus()
-		m.sidebar.Focused = m.layout.IsFocused(PaneSidebar)
 
 	case keyMatches(msg, m.keys.Search):
 		m.setStatus("Search not implemented yet")
@@ -870,13 +790,6 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 
 	success := msg.err == nil
 
-	// Update sidebar status
-	if success {
-		m.sidebar.SetItemStatus(msg.cmd, StatusSuccess)
-	} else {
-		m.sidebar.SetItemStatus(msg.cmd, StatusError)
-	}
-
 	if msg.build != nil {
 		m.lastBuild = *msg.build
 		m.lastResult = &Result{
@@ -924,10 +837,6 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 func (m *Model) startOp(name string) tea.Cmd {
 	m.running = true
 	m.runningCmd = name
-
-	// Update sidebar status
-	m.sidebar.ClearAllStatus()
-	m.sidebar.SetItemStatus(name, StatusRunning)
 
 	// Update progress bar
 	m.progressBar.Visible = true
@@ -1091,7 +1000,7 @@ func (m Model) View() string {
 
 func (m Model) mainView() string {
 	// Sync state to components
-	m.syncSidebarState()
+	m.syncStatusBarState()
 
 	// Build status bar content
 	statusBarContent := m.statusBar.View(m.width, m.styles)
@@ -1105,9 +1014,6 @@ func (m Model) mainView() string {
 		m.layout.ShowProgressBar = false
 	}
 
-	// Build sidebar content
-	sidebarContent := m.sidebar.View(m.styles)
-
 	// Build main content (logs)
 	contentArea := m.contentView()
 
@@ -1118,7 +1024,6 @@ func (m Model) mainView() string {
 	return m.layout.RenderFullLayout(
 		statusBarContent,
 		progressBarContent,
-		sidebarContent,
 		contentArea,
 		hintsBarContent,
 		m.styles,
