@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,16 +17,9 @@ import (
 	"github.com/xcbolt/xcbolt/internal/core"
 )
 
-type tab int
-
-const (
-	tabBuild tab = iota
-	tabRun
-	tabTest
-	tabLogs
-	tabContext
-	tabDoctor
-)
+// =============================================================================
+// Messages
+// =============================================================================
 
 type eventMsg core.Event
 
@@ -46,48 +40,78 @@ type opDoneMsg struct {
 
 type tickMsg time.Time
 
+// =============================================================================
+// Result tracks the last operation result for display
+// =============================================================================
+
+type Result struct {
+	Operation string // "build", "run", "test"
+	Success   bool
+	Duration  time.Duration
+	Message   string
+	Timestamp time.Time
+}
+
+// =============================================================================
+// Model
+// =============================================================================
+
 type Model struct {
+	// Project configuration
 	projectRoot string
 	configPath  string
+	cfg         core.Config
+	info        core.ContextInfo
+	state       core.State // User state (recents, favorites)
 
-	cfg  core.Config
-	info core.ContextInfo
-
+	// Window dimensions
 	width  int
 	height int
 
-	styles styleSet
+	// Styles and keys
+	styles Styles
 	keys   keyMap
 	help   help.Model
 
-	spinner spinner.Model
+	// UI mode
+	mode         Mode
+	selectorType SelectorType
 
+	// Components
+	spinner  spinner.Model
 	viewport viewport.Model
-	logLines []string
+	toast    toastModel
+	wizard   wizardModel
+	selector SelectorModel
+	palette  PaletteModel
 
-	tab tab
+	// Logs
+	logLines   []string
+	autoFollow bool
 
+	// Operation state
 	running    bool
 	runningCmd string
 	cancelFn   context.CancelFunc
 	eventCh    <-chan core.Event
 	doneCh     <-chan opDoneMsg
 
-	toast toastModel
+	// Progress tracking (for stage indicators)
+	currentStage  string
+	stageProgress string // e.g., "23/47"
 
-	mode   string // "main" | "wizard"
-	wizard wizardModel
-
-	lastBuild core.BuildResult
-	lastRun   core.RunResult
-	lastTest  core.TestResult
-
-	lastErr string
+	// Results
+	lastResult *Result
+	lastBuild  core.BuildResult
+	lastRun    core.RunResult
+	lastTest   core.TestResult
+	lastErr    string
 }
 
+// NewModel creates a new TUI model
 func NewModel(projectRoot string, configPath string) Model {
 	sp := spinner.New()
-	sp.Spinner = spinner.Line
+	sp.Spinner = spinner.Dot
 
 	vp := viewport.New(0, 0)
 	vp.YPosition = 0
@@ -95,21 +119,26 @@ func NewModel(projectRoot string, configPath string) Model {
 	h := help.New()
 	h.ShowAll = false
 
+	// Load user state (ignore errors - use defaults if not found)
+	state, _ := core.LoadState()
+
 	return Model{
 		projectRoot: projectRoot,
 		configPath:  configPath,
-		styles:      defaultStyles(),
+		styles:      DefaultStyles(),
 		keys:        defaultKeyMap(),
 		help:        h,
 		spinner:     sp,
 		viewport:    vp,
 		logLines:    []string{},
-		tab:         tabLogs,
+		autoFollow:  true,
+		mode:        ModeNormal,
 		toast:       newToast(),
-		mode:        "main",
+		state:       state,
 	}
 }
 
+// Init initializes the model
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
@@ -131,7 +160,6 @@ func loadContextCmd(projectRoot, configPath string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 
-		// Use a silent emitter (TUI will render its own).
 		emit := core.NewTextEmitter(ioDiscard{})
 		info, cfg2, err := core.DiscoverContext(ctx, projectRoot, cfg, emit)
 		if err != nil {
@@ -141,10 +169,13 @@ func loadContextCmd(projectRoot, configPath string) tea.Cmd {
 	}
 }
 
-// ioDiscard is a minimal io.Writer that discards output (avoid importing io for a single use).
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
+
+// =============================================================================
+// Update
+// =============================================================================
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -153,15 +184,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		headerH := 3
-		footerH := 2
-		panelH := max(0, m.height-headerH-footerH)
-		m.viewport.Width = max(0, m.width-4)
-		m.viewport.Height = max(0, panelH-4)
-		if m.mode == "wizard" {
+		m.updateViewportSize()
+		if m.mode == ModeWizard {
 			m.wizard = newWizard(m.info, m.cfg, m.width)
 		}
-		cmds = append(cmds, nil)
+		// Responsive: warn if terminal is too small
+		if m.width < 80 || m.height < 20 {
+			m.toast.Show("Terminal too small (min 80x20)", 2*time.Second)
+		}
 
 	case contextLoadedMsg:
 		if msg.err != nil {
@@ -171,64 +201,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.info = msg.info
 		m.cfg = msg.cfg
-		m.toast.Show("Context ready", 1200*time.Millisecond)
+
+		// Auto-detect: if not configured but context found, auto-select defaults
+		needsConfig := m.cfg.Scheme == "" || (m.cfg.Workspace == "" && m.cfg.Project == "")
+		if needsConfig && m.tryAutoDetect() {
+			// Auto-config applied - save and show toast
+			if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err == nil {
+				m.toast.Show("Ready", 1200*time.Millisecond)
+			} else {
+				m.toast.Show("Context ready", 1200*time.Millisecond)
+			}
+		} else {
+			m.toast.Show("Context ready", 1200*time.Millisecond)
+		}
 
 	case tickMsg:
 		m.toast.Update()
 		cmds = append(cmds, tickCmd())
 
 	case tea.KeyMsg:
-		// Wizard mode: delegate to wizard, but still allow quit/cancel.
-		if m.mode == "wizard" {
-			switch {
-			case keyMatches(msg, m.keys.Quit):
-				return m, tea.Quit
-			}
-			var cmd tea.Cmd
-			m.wizard, cmd = m.wizard.Update(msg)
+		cmd := m.handleKeyPress(msg)
+		if cmd != nil {
 			cmds = append(cmds, cmd)
-			return m, tea.Batch(cmds...)
-		}
-
-		switch {
-		case keyMatches(msg, m.keys.Quit):
-			return m, tea.Quit
-		case keyMatches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-		case keyMatches(msg, m.keys.Tab):
-			m.tab = (m.tab + 1) % 6
-		case keyMatches(msg, m.keys.PrevTab):
-			m.tab = (m.tab + 5) % 6
-		case keyMatches(msg, m.keys.Logs):
-			m.tab = tabLogs
-		case keyMatches(msg, m.keys.Refresh):
-			cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath))
-			m.toast.Show("Refreshing…", 1*time.Second)
-		case keyMatches(msg, m.keys.Init):
-			m.mode = "wizard"
-			m.wizard = newWizard(m.info, m.cfg, m.width)
-			cmds = append(cmds, m.wizard.Init())
-		case keyMatches(msg, m.keys.Cancel):
-			if m.running && m.cancelFn != nil {
-				m.cancelFn()
-				m.toast.Show("Canceled", 900*time.Millisecond)
-			}
-		case keyMatches(msg, m.keys.Build):
-			if !m.running {
-				cmds = append(cmds, m.startOp("build"))
-			}
-		case keyMatches(msg, m.keys.Run):
-			if !m.running {
-				cmds = append(cmds, m.startOp("run"))
-			}
-		case keyMatches(msg, m.keys.Test):
-			if !m.running {
-				cmds = append(cmds, m.startOp("test"))
-			}
 		}
 
 	case wizardDoneMsg:
-		m.mode = "main"
+		m.mode = ModeNormal
 		if msg.aborted {
 			m.toast.Show("Init canceled", 1200*time.Millisecond)
 			break
@@ -249,39 +247,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case eventMsg:
 		ev := core.Event(msg)
-		m.appendLog(formatEventLine(ev))
+		m.handleEvent(ev)
 		m.viewport.SetContent(strings.Join(m.logLines, "\n"))
-		m.viewport.GotoBottom()
-		// Keep listening for more events.
+		if m.autoFollow {
+			m.viewport.GotoBottom()
+		}
 		if m.eventCh != nil {
 			cmds = append(cmds, waitForEvent(m.eventCh))
 		}
 
 	case opDoneMsg:
-		m.running = false
-		m.runningCmd = ""
-		m.cancelFn = nil
-		m.eventCh = nil
-		m.doneCh = nil
-		if msg.cfg.Version != 0 {
-			m.cfg = msg.cfg
-		}
-		if msg.build != nil {
-			m.lastBuild = *msg.build
-		}
-		if msg.run != nil {
-			m.lastRun = *msg.run
-		}
-		if msg.test != nil {
-			m.lastTest = *msg.test
-		}
-		if msg.err != nil {
-			m.lastErr = msg.err.Error()
-			m.toast.Show(strings.ToUpper(msg.cmd)+" failed", 2*time.Second)
-		} else {
-			m.toast.Show(strings.ToUpper(msg.cmd)+" done", 1200*time.Millisecond)
-		}
-		// Refresh context after build/run/test to catch new devices/sims.
+		m.handleOpDone(msg)
 		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath))
 
 	case spinner.TickMsg:
@@ -290,21 +266,519 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 	}
 
-	// viewport update for scroll keys, mouse wheel, etc.
-	if m.mode == "main" && m.tab == tabLogs {
+	// Viewport scrolling (only in normal mode)
+	if m.mode == ModeNormal {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
+
+		// Check if user scrolled up manually
+		if m.viewport.AtBottom() {
+			m.autoFollow = true
+		}
 	}
 
 	return m, tea.Batch(cmds...)
 }
 
+func (m *Model) openSchemeSelector() {
+	if len(m.info.Schemes) == 0 {
+		m.toast.Show("No schemes found", 1*time.Second)
+		return
+	}
+
+	items := SchemeItems(m.info.Schemes)
+	width := minInt(m.width-10, 60)
+	m.selector = NewSelector("Select Scheme", items, width, m.styles)
+	m.selectorType = SelectorScheme
+	m.mode = ModeSelector
+}
+
+func (m *Model) openDestinationSelector() {
+	// Convert core types to selector types
+	sims := make([]SimulatorInfo, len(m.info.Simulators))
+	for i, s := range m.info.Simulators {
+		sims[i] = SimulatorInfo{
+			Name:        s.Name,
+			UDID:        s.UDID,
+			State:       s.State,
+			RuntimeName: s.RuntimeName,
+			OSVersion:   s.OSVersion,
+			Available:   s.Available,
+		}
+	}
+
+	devices := make([]DeviceInfo, len(m.info.Devices))
+	for i, d := range m.info.Devices {
+		devices[i] = DeviceInfo{
+			Name:       d.Name,
+			Identifier: d.Identifier,
+			Platform:   d.Platform,
+			OSVersion:  d.OSVersion,
+			Model:      d.Model,
+		}
+	}
+
+	items := DestinationItems(sims, devices)
+	if len(items) == 0 {
+		m.toast.Show("No destinations found", 1*time.Second)
+		return
+	}
+
+	width := minInt(m.width-10, 60)
+	m.selector = NewSelector("Select Destination", items, width, m.styles)
+	m.selectorType = SelectorDestination
+	m.mode = ModeSelector
+}
+
+func (m *Model) handleSelectorResult(item *SelectorItem) {
+	switch m.selectorType {
+	case SelectorScheme:
+		m.cfg.Scheme = item.ID
+		m.toast.Show("Scheme: "+item.Title, 1*time.Second)
+		// Save config
+		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+			m.lastErr = err.Error()
+		}
+
+	case SelectorDestination:
+		// Find the destination in our lists
+		for _, sim := range m.info.Simulators {
+			if sim.UDID == item.ID {
+				m.cfg.Destination = core.Destination{
+					Kind:     "simulator",
+					UDID:     sim.UDID,
+					Name:     sim.Name,
+					Platform: "iOS Simulator",
+					OS:       sim.OSVersion,
+				}
+				m.toast.Show("Destination: "+item.Title, 1*time.Second)
+				if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+					m.lastErr = err.Error()
+				}
+				return
+			}
+		}
+		for _, dev := range m.info.Devices {
+			if dev.Identifier == item.ID {
+				m.cfg.Destination = core.Destination{
+					Kind:     "device",
+					UDID:     dev.Identifier,
+					Name:     dev.Name,
+					Platform: dev.Platform,
+					OS:       dev.OSVersion,
+				}
+				m.toast.Show("Destination: "+item.Title, 1*time.Second)
+				if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+					m.lastErr = err.Error()
+				}
+				return
+			}
+		}
+	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (m *Model) openPalette() {
+	width := minInt(m.width-10, 60)
+	m.palette = NewPalette(width, m.styles)
+	m.mode = ModePalette
+}
+
+func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
+	switch cmd.ID {
+	// Actions
+	case "build":
+		if !m.running {
+			return m.startOp("build")
+		}
+	case "run":
+		if !m.running {
+			return m.startOp("run")
+		}
+	case "test":
+		if !m.running {
+			return m.startOp("test")
+		}
+	case "clean":
+		if !m.running {
+			return m.startOp("clean")
+		}
+	case "stop":
+		m.toast.Show("Stop not implemented yet", 1*time.Second)
+
+	// Archive/Profile (not implemented yet)
+	case "archive", "archive-appstore", "archive-adhoc", "profile", "analyze":
+		m.toast.Show(cmd.Name+" coming soon", 1*time.Second)
+
+	// Configuration
+	case "scheme":
+		m.openSchemeSelector()
+	case "destination":
+		m.openDestinationSelector()
+	case "init":
+		m.mode = ModeWizard
+		m.wizard = newWizard(m.info, m.cfg, m.width)
+		return m.wizard.Init()
+	case "refresh":
+		m.toast.Show("Refreshing…", 1*time.Second)
+		return loadContextCmd(m.projectRoot, m.configPath)
+
+	// Utilities
+	case "doctor":
+		m.toast.Show("Doctor not implemented in TUI", 1*time.Second)
+	case "logs":
+		m.toast.Show("Use CLI: xcbolt logs", 1*time.Second)
+	case "simulator-boot", "simulator-shutdown":
+		m.toast.Show("Use CLI: xcbolt simulator", 1*time.Second)
+
+	// Navigation
+	case "help":
+		m.mode = ModeHelp
+	case "quit":
+		return tea.Quit
+	}
+
+	return nil
+}
+
+func (m *Model) updateViewportSize() {
+	// Layout heights: header(2) + actionbar(1) + border(1) + resultsbar(1) + border(1) = 6
+	headerH := 2
+	actionBarH := 1
+	resultsBarH := 1
+	bordersH := 2
+	totalChrome := headerH + actionBarH + resultsBarH + bordersH
+
+	m.viewport.Width = maxInt(0, m.width-2)
+	m.viewport.Height = maxInt(0, m.height-totalChrome)
+}
+
+func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
+	// Wizard mode - delegate to wizard
+	if m.mode == ModeWizard {
+		if keyMatches(msg, m.keys.Quit) {
+			return tea.Quit
+		}
+		var cmd tea.Cmd
+		m.wizard, cmd = m.wizard.Update(msg)
+		return cmd
+	}
+
+	// Help mode - any key closes
+	if m.mode == ModeHelp {
+		m.mode = ModeNormal
+		return nil
+	}
+
+	// Selector mode
+	if m.mode == ModeSelector {
+		var result *SelectorResult
+		m.selector, _, result = m.selector.Update(msg)
+
+		if result != nil {
+			m.mode = ModeNormal
+			if !result.Aborted && result.Selected != nil {
+				m.handleSelectorResult(result.Selected)
+			}
+		}
+		return nil
+	}
+
+	// Palette mode
+	if m.mode == ModePalette {
+		var result *PaletteResult
+		m.palette, _, result = m.palette.Update(msg)
+
+		if result != nil {
+			m.mode = ModeNormal
+			if !result.Aborted && result.Command != nil {
+				return m.executePaletteCommand(result.Command)
+			}
+		}
+		return nil
+	}
+
+	// Normal mode
+	switch {
+	case keyMatches(msg, m.keys.Quit):
+		return tea.Quit
+
+	case keyMatches(msg, m.keys.Help):
+		m.mode = ModeHelp
+
+	case keyMatches(msg, m.keys.Cancel):
+		if m.running && m.cancelFn != nil {
+			m.cancelFn()
+			m.toast.Show("Canceled", 900*time.Millisecond)
+		}
+
+	case keyMatches(msg, m.keys.Build):
+		if !m.running {
+			return m.startOp("build")
+		}
+
+	case keyMatches(msg, m.keys.Run):
+		if !m.running {
+			return m.startOp("run")
+		}
+
+	case keyMatches(msg, m.keys.Test):
+		if !m.running {
+			return m.startOp("test")
+		}
+
+	case keyMatches(msg, m.keys.Clean):
+		if !m.running {
+			return m.startOp("clean")
+		}
+
+	case keyMatches(msg, m.keys.Scheme):
+		m.openSchemeSelector()
+
+	case keyMatches(msg, m.keys.Destination):
+		m.openDestinationSelector()
+
+	case keyMatches(msg, m.keys.Palette):
+		m.openPalette()
+
+	case keyMatches(msg, m.keys.Init):
+		m.mode = ModeWizard
+		m.wizard = newWizard(m.info, m.cfg, m.width)
+		return m.wizard.Init()
+
+	case keyMatches(msg, m.keys.Refresh):
+		m.toast.Show("Refreshing…", 1*time.Second)
+		return loadContextCmd(m.projectRoot, m.configPath)
+
+	case keyMatches(msg, m.keys.ToggleAutoFollow):
+		m.autoFollow = !m.autoFollow
+		if m.autoFollow {
+			m.viewport.GotoBottom()
+			m.toast.Show("Following logs", 800*time.Millisecond)
+		} else {
+			m.toast.Show("Paused log follow", 800*time.Millisecond)
+		}
+
+	case keyMatches(msg, m.keys.ScrollBottom):
+		m.viewport.GotoBottom()
+		m.autoFollow = true
+	}
+
+	return nil
+}
+
+// tryAutoDetect attempts to auto-configure if the project has a single obvious setup.
+// Returns true if auto-configuration was applied.
+func (m *Model) tryAutoDetect() bool {
+	// Need at least one project/workspace
+	hasProject := len(m.info.Workspaces) > 0 || len(m.info.Projects) > 0
+	if !hasProject {
+		return false
+	}
+
+	// Need at least one scheme
+	if len(m.info.Schemes) == 0 {
+		return false
+	}
+
+	// Auto-select project: prefer workspace, then project
+	if m.cfg.Workspace == "" && m.cfg.Project == "" {
+		if len(m.info.Workspaces) == 1 {
+			m.cfg.Workspace = m.info.Workspaces[0]
+		} else if len(m.info.Projects) == 1 {
+			m.cfg.Project = m.info.Projects[0]
+		} else if len(m.info.Workspaces) > 0 {
+			m.cfg.Workspace = m.info.Workspaces[0]
+		} else if len(m.info.Projects) > 0 {
+			m.cfg.Project = m.info.Projects[0]
+		}
+	}
+
+	// Auto-select scheme: prefer first one
+	if m.cfg.Scheme == "" && len(m.info.Schemes) > 0 {
+		m.cfg.Scheme = m.info.Schemes[0]
+	}
+
+	// Auto-select configuration
+	if m.cfg.Configuration == "" {
+		m.cfg.Configuration = "Debug"
+	}
+
+	// Auto-select destination: prefer first booted simulator
+	if m.cfg.Destination.UDID == "" && len(m.info.Simulators) > 0 {
+		m.cfg.Destination.Kind = core.DestSimulator
+		for _, sim := range m.info.Simulators {
+			if sim.Available && sim.State == "Booted" {
+				m.cfg.Destination.UDID = sim.UDID
+				m.cfg.Destination.Name = sim.Name
+				m.cfg.Destination.Platform = "iOS Simulator"
+				m.cfg.Destination.OS = sim.OSVersion
+				break
+			}
+		}
+		// If no booted simulator, use first available
+		if m.cfg.Destination.UDID == "" {
+			for _, sim := range m.info.Simulators {
+				if sim.Available {
+					m.cfg.Destination.UDID = sim.UDID
+					m.cfg.Destination.Name = sim.Name
+					m.cfg.Destination.Platform = "iOS Simulator"
+					m.cfg.Destination.OS = sim.OSVersion
+					break
+				}
+			}
+		}
+	}
+
+	return m.cfg.Scheme != "" && (m.cfg.Workspace != "" || m.cfg.Project != "")
+}
+
+// saveRecentCombo saves the current scheme+destination combo to recents
+func (m *Model) saveRecentCombo() {
+	if m.cfg.Scheme == "" || m.cfg.Destination.UDID == "" {
+		return
+	}
+
+	combo := core.RecentCombo{
+		Scheme:      m.cfg.Scheme,
+		Destination: m.cfg.Destination.Name,
+		DestUDID:    m.cfg.Destination.UDID,
+		DestKind:    string(m.cfg.Destination.Kind),
+		UsedAt:      time.Now().Format(time.RFC3339),
+	}
+
+	m.state.AddRecentCombo(m.projectRoot, combo)
+	// Save state in background (ignore errors)
+	go func() {
+		_ = core.SaveState(m.state)
+	}()
+}
+
+func (m *Model) handleEvent(ev core.Event) {
+	line := m.formatEventLine(ev)
+	m.appendLog(line)
+
+	// Track progress for stage indicators
+	m.parseProgressFromEvent(ev)
+}
+
+func (m *Model) parseProgressFromEvent(ev core.Event) {
+	msg := ev.Msg
+
+	// Reset progress on new operation
+	if strings.Contains(msg, "Starting") || strings.Contains(msg, "Build started") {
+		m.currentStage = ""
+		m.stageProgress = ""
+		return
+	}
+
+	// Extract stage from common xcodebuild output patterns
+	switch {
+	case strings.Contains(msg, "Compiling"):
+		m.currentStage = "Compiling"
+	case strings.Contains(msg, "Linking"):
+		m.currentStage = "Linking"
+	case strings.Contains(msg, "Signing"):
+		m.currentStage = "Signing"
+	case strings.Contains(msg, "Processing"):
+		m.currentStage = "Processing"
+	case strings.Contains(msg, "Copying"):
+		m.currentStage = "Copying"
+	case strings.Contains(msg, "Running"):
+		m.currentStage = "Running"
+	case strings.Contains(msg, "Testing"):
+		m.currentStage = "Testing"
+	case strings.Contains(msg, "Analyzing"):
+		m.currentStage = "Analyzing"
+	}
+
+	// Try to extract progress numbers (e.g., "47 of 100 tasks")
+	// This is a simple heuristic since xcodebuild output varies
+	if strings.Contains(msg, " of ") && strings.Contains(msg, "task") {
+		// Try to find pattern like "X of Y"
+		parts := strings.Split(msg, " of ")
+		if len(parts) >= 2 {
+			// Extract last number from first part
+			words1 := strings.Fields(parts[0])
+			if len(words1) > 0 {
+				num1 := words1[len(words1)-1]
+				// Extract first number from second part
+				words2 := strings.Fields(parts[1])
+				if len(words2) > 0 {
+					num2 := words2[0]
+					m.stageProgress = num1 + "/" + num2
+				}
+			}
+		}
+	}
+}
+
+func (m *Model) handleOpDone(msg opDoneMsg) {
+	m.running = false
+	m.runningCmd = ""
+	m.cancelFn = nil
+	m.eventCh = nil
+	m.doneCh = nil
+	m.currentStage = ""
+	m.stageProgress = ""
+
+	if msg.cfg.Version != 0 {
+		m.cfg = msg.cfg
+	}
+
+	success := msg.err == nil
+
+	if msg.build != nil {
+		m.lastBuild = *msg.build
+		m.lastResult = &Result{
+			Operation: "Build",
+			Success:   success,
+			Duration:  msg.build.Duration,
+			Timestamp: time.Now(),
+		}
+	}
+	if msg.run != nil {
+		m.lastRun = *msg.run
+		m.lastResult = &Result{
+			Operation: "Run",
+			Success:   success,
+			Message:   fmt.Sprintf("PID %d", msg.run.PID),
+			Timestamp: time.Now(),
+		}
+	}
+	if msg.test != nil {
+		m.lastTest = *msg.test
+		m.lastResult = &Result{
+			Operation: "Test",
+			Success:   success,
+			Duration:  msg.test.Duration,
+			Timestamp: time.Now(),
+		}
+	}
+
+	if msg.err != nil {
+		m.lastErr = msg.err.Error()
+		m.toast.Show(strings.ToUpper(msg.cmd)+" failed", 2*time.Second)
+	} else {
+		m.toast.Show(strings.ToUpper(msg.cmd)+" done", 1200*time.Millisecond)
+	}
+}
+
 func (m *Model) startOp(name string) tea.Cmd {
 	m.running = true
 	m.runningCmd = name
-	m.appendLog("—")
-	m.appendLog(fmt.Sprintf("%s %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
+	m.appendLog("─────────────────────────────────────────")
+	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
+
+	// Save this scheme+destination combo to recents
+	m.saveRecentCombo()
 
 	events := make(chan core.Event, 256)
 	done := make(chan opDoneMsg, 1)
@@ -330,6 +804,19 @@ func (m *Model) startOp(name string) tea.Cmd {
 		case "test":
 			res, cfg2, err := core.Test(ctx, root, cfg, nil, nil, emitter)
 			done <- opDoneMsg{cmd: name, err: err, cfg: cfg2, test: &res}
+		case "clean":
+			// Clean derived data and results
+			paths := []string{
+				filepath.Join(root, ".xcbolt", "DerivedData"),
+				filepath.Join(root, ".xcbolt", "Results"),
+			}
+			var cleanErr error
+			for _, p := range paths {
+				if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
+					cleanErr = err
+				}
+			}
+			done <- opDoneMsg{cmd: name, err: cleanErr}
 		default:
 			done <- opDoneMsg{cmd: name, err: fmt.Errorf("unknown op %s", name)}
 		}
@@ -346,7 +833,6 @@ func (e *chanEmitter) Emit(ev core.Event) {
 	select {
 	case e.ch <- ev:
 	default:
-		// Drop if UI is too slow; keep the tool responsive.
 	}
 }
 
@@ -375,233 +861,342 @@ func (m *Model) appendLog(line string) {
 		return
 	}
 	m.logLines = append(m.logLines, line)
-	// Cap memory
 	if len(m.logLines) > 2000 {
 		m.logLines = m.logLines[len(m.logLines)-2000:]
 	}
 }
 
-func formatEventLine(ev core.Event) string {
-	// Compact format.
+func (m *Model) formatEventLine(ev core.Event) string {
+	icons := m.styles.Icons
 	prefix := ""
+
 	switch ev.Type {
 	case "error":
-		prefix = "✖ "
+		prefix = m.styles.StatusStyle("error").Render(icons.Error) + " "
 	case "warning":
-		prefix = "! "
+		prefix = m.styles.StatusStyle("warning").Render(icons.Warning) + " "
 	case "result":
-		prefix = "✓ "
+		prefix = m.styles.StatusStyle("success").Render(icons.Success) + " "
 	case "status":
-		prefix = "• "
-	case "log":
-		prefix = ""
-	default:
-		prefix = ""
+		prefix = m.styles.StatusStyle("running").Render(icons.ChevronRight) + " "
 	}
+
 	msg := ev.Msg
 	if msg == "" && ev.Err != nil {
 		msg = ev.Err.Message
 	}
 	if msg == "" {
-		msg = fmt.Sprintf("%s", ev.Type)
+		msg = ev.Type
 	}
 	return prefix + msg
 }
+
+// =============================================================================
+// View
+// =============================================================================
 
 func (m Model) View() string {
 	if m.width == 0 {
 		return ""
 	}
 
-	if m.mode == "wizard" {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			m.headerView(),
-			m.styles.Panel.Render(m.wizard.View()),
-			m.footerView(),
-		)
+	// Help overlay mode
+	if m.mode == ModeHelp {
+		return m.helpOverlayView()
 	}
 
+	// Wizard mode
+	if m.mode == ModeWizard {
+		return m.wizardView()
+	}
+
+	// Selector mode - show selector overlay on top of main view
+	if m.mode == ModeSelector {
+		return m.selectorOverlayView()
+	}
+
+	// Palette mode - show palette overlay
+	if m.mode == ModePalette {
+		return m.paletteOverlayView()
+	}
+
+	// Normal mode - main layout
+	return m.mainView()
+}
+
+func (m Model) mainView() string {
+	header := m.headerView()
+	actionBar := m.actionBarView()
+	logs := m.logsView()
+	resultsBar := m.resultsBarView()
+
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.headerView(),
-		m.tabsView(),
-		m.panelView(),
-		m.footerView(),
+		header,
+		actionBar,
+		logs,
+		resultsBar,
 	)
 }
 
 func (m Model) headerView() string {
-	name := m.styles.Brand.Render("xcbolt")
-	proj := filepath.Base(m.projectRoot)
-	meta := []string{proj}
-	if m.cfg.Scheme != "" {
-		meta = append(meta, "scheme: "+m.cfg.Scheme)
+	s := m.styles
+	isCompact := m.width < 100
+
+	// Brand
+	brand := s.Header.Brand.Render("xcbolt")
+
+	// Scheme selector
+	scheme := m.cfg.Scheme
+	if scheme == "" {
+		scheme = "No scheme"
 	}
-	if m.cfg.Destination.Kind != "" {
-		label := string(m.cfg.Destination.Kind)
-		if m.cfg.Destination.Name != "" {
-			label += " · " + m.cfg.Destination.Name
+	schemeLabel := s.Header.Selector.Render(scheme + " " + s.Icons.ChevronDown)
+
+	// Destination selector (shortened in compact mode)
+	dest := "No destination"
+	if m.cfg.Destination.Name != "" {
+		dest = m.cfg.Destination.Name
+		// Only show OS version if we have room
+		if !isCompact && m.cfg.Destination.OS != "" {
+			dest += " (" + m.cfg.Destination.OS + ")"
 		}
-		meta = append(meta, "dest: "+label)
+	} else if m.cfg.Destination.Kind != "" {
+		dest = string(m.cfg.Destination.Kind)
 	}
-	status := "idle"
-	if m.running {
-		status = m.spinner.View() + " " + strings.ToUpper(m.runningCmd)
-	}
+	destLabel := s.Header.Selector.Render(dest + " " + s.Icons.ChevronDown)
+
+	// Status (right-aligned)
+	status := m.renderStatus()
+
+	// Calculate spacing
+	leftContent := lipgloss.JoinHorizontal(lipgloss.Center,
+		brand,
+		"   ",
+		schemeLabel,
+		"   ",
+		destLabel,
+	)
+	leftWidth := lipgloss.Width(leftContent)
+	statusWidth := lipgloss.Width(status)
+	spacer := strings.Repeat(" ", maxInt(1, m.width-leftWidth-statusWidth-4))
+
 	line := lipgloss.JoinHorizontal(lipgloss.Center,
-		name,
-		"  ",
-		m.styles.Meta.Render(strings.Join(meta, "  •  ")),
-		lipgloss.NewStyle().Width(max(0, m.width-2)).Align(lipgloss.Right).Render(m.styles.Meta.Render(status)),
+		leftContent,
+		spacer,
+		status,
 	)
-	return m.styles.Header.Width(m.width).Render(line)
+
+	return s.Header.Container.Width(m.width).Render(line)
 }
 
-func (m Model) tabsView() string {
-	tabs := []string{"Build", "Run", "Test", "Logs", "Context", "Doctor"}
-	r := []string{}
-	for i, t := range tabs {
-		if tab(i) == m.tab {
-			r = append(r, m.styles.TabActive.Render(t))
-		} else {
-			r = append(r, m.styles.TabInactive.Render(t))
+func (m Model) renderStatus() string {
+	s := m.styles
+
+	if m.running {
+		icon := s.StatusStyle("running").Render(m.spinner.View())
+
+		// Build status label with stage and progress
+		var parts []string
+		parts = append(parts, strings.ToUpper(m.runningCmd))
+
+		if m.currentStage != "" {
+			parts = append(parts, m.currentStage)
 		}
+
+		if m.stageProgress != "" {
+			parts = append(parts, m.stageProgress)
+		}
+
+		label := strings.Join(parts, " ")
+		return icon + " " + s.Header.Status.Render(label)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, r...)
+
+	icon := s.StatusStyle("idle").Render(s.Icons.Idle)
+	return icon + " " + s.Header.Status.Render("idle")
 }
 
-func (m Model) panelView() string {
-	w := max(0, m.width-2)
-	h := max(0, m.height-6)
+func (m Model) actionBarView() string {
+	s := m.styles
 
-	title := ""
-	body := ""
+	actions := []string{}
+	hints := m.keys.ActionHints()
 
-	switch m.tab {
-	case tabBuild:
-		title = "Build"
-		body = m.buildView()
-	case tabRun:
-		title = "Run"
-		body = m.runView()
-	case tabTest:
-		title = "Test"
-		body = m.testView()
-	case tabLogs:
-		title = "Logs"
-		body = m.logsView()
-	case tabContext:
-		title = "Context"
-		body = m.contextView()
-	case tabDoctor:
-		title = "Doctor"
-		body = m.doctorView()
-	default:
-		title = ""
-		body = ""
+	// Compact mode: only show 3 primary actions if width < 100
+	if m.width < 100 && len(hints) > 3 {
+		hints = hints[:3]
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left,
-		m.styles.PanelTitle.Render(title),
-		body,
-	)
-
-	return m.styles.Panel.Width(w).Height(h).Render(content)
-}
-
-func (m Model) buildView() string {
-	if m.lastBuild.ResultBundle == "" {
-		return m.styles.Muted.Render("Press 'b' to build")
+	for _, hint := range hints {
+		action := s.ActionBar.ActionKey.Render(hint.Key) + " " + s.ActionBar.ActionText.Render(hint.Name)
+		actions = append(actions, s.ActionBar.Action.Render(action))
 	}
-	return fmt.Sprintf(
-		"Result: %s\nExit: %d\nDuration: %s\n",
-		m.lastBuild.ResultBundle,
-		m.lastBuild.ExitCode,
-		m.lastBuild.Duration.Round(100*time.Millisecond),
-	)
-}
 
-func (m Model) runView() string {
-	if m.lastRun.BundleID == "" {
-		return m.styles.Muted.Render("Press 'r' to run")
-	}
-	return fmt.Sprintf(
-		"Bundle: %s\nTarget: %s\nPID: %d\nApp: %s\n",
-		m.lastRun.BundleID,
-		m.lastRun.Target,
-		m.lastRun.PID,
-		m.lastRun.AppPath,
-	)
-}
-
-func (m Model) testView() string {
-	if m.lastTest.ResultBundle == "" {
-		return m.styles.Muted.Render("Press 't' to test")
-	}
-	return fmt.Sprintf(
-		"Result: %s\nExit: %d\nDuration: %s\n",
-		m.lastTest.ResultBundle,
-		m.lastTest.ExitCode,
-		m.lastTest.Duration.Round(100*time.Millisecond),
-	)
+	line := lipgloss.JoinHorizontal(lipgloss.Left, actions...)
+	return s.ActionBar.Container.Width(m.width).Render(line)
 }
 
 func (m Model) logsView() string {
+	s := m.styles
+
 	if len(m.logLines) == 0 {
-		return m.styles.Muted.Render("No logs yet. Run build/run/test or press 'c' to refresh context.")
+		// Empty state - show welcome message with context
+		var lines []string
+
+		// Check if we have a valid configuration
+		isConfigured := m.cfg.Scheme != "" && (m.cfg.Workspace != "" || m.cfg.Project != "")
+
+		if isConfigured {
+			// Ready to work - minimal hint
+			lines = append(lines, s.Logs.EmptyState.Render("Ready to build"))
+			lines = append(lines, "")
+			lines = append(lines, s.ResultsBar.Hints.Render("r run  b build  t test"))
+		} else if m.info.Schemes != nil && len(m.info.Schemes) > 0 {
+			// Context loaded but not configured - prompt to configure
+			lines = append(lines, s.Logs.EmptyState.Render("Press i to configure"))
+			lines = append(lines, "")
+			lines = append(lines, s.ResultsBar.Hints.Render("s scheme  d destination  ? help"))
+		} else {
+			// Context loading or no project detected
+			lines = append(lines, s.Logs.EmptyState.Render("Loading project..."))
+		}
+
+		content := strings.Join(lines, "\n")
+		centered := lipgloss.Place(
+			m.viewport.Width,
+			m.viewport.Height,
+			lipgloss.Center,
+			lipgloss.Center,
+			content,
+		)
+		return s.Logs.Container.Width(m.width).Height(m.viewport.Height).Render(centered)
 	}
-	m.viewport.Width = max(0, m.width-8)
-	m.viewport.Height = max(0, m.height-12)
-	return m.viewport.View()
+
+	return s.Logs.Container.Width(m.width).Height(m.viewport.Height).Render(m.viewport.View())
 }
 
-func (m Model) contextView() string {
-	lines := []string{}
-	lines = append(lines, fmt.Sprintf("Project: %s", m.projectRoot))
-	if len(m.info.Workspaces) > 0 {
-		lines = append(lines, fmt.Sprintf("Workspaces: %d", len(m.info.Workspaces)))
-	}
-	if len(m.info.Projects) > 0 {
-		lines = append(lines, fmt.Sprintf("Projects: %d", len(m.info.Projects)))
-	}
-	lines = append(lines, fmt.Sprintf("Schemes: %d", len(m.info.Schemes)))
-	lines = append(lines, fmt.Sprintf("Simulators: %d", len(m.info.Simulators)))
-	lines = append(lines, fmt.Sprintf("Devices: %d", len(m.info.Devices)))
-	return strings.Join(lines, "\n")
-}
+func (m Model) resultsBarView() string {
+	s := m.styles
 
-func (m Model) doctorView() string {
-	// Lightweight hints: full doctor report is available via `xcbolt doctor`.
-	lines := []string{
-		"Quick checks:",
-		"- `xcrun xcodebuild -version`",
-		"- `xcrun simctl list --json`",
-		"- `xcrun devicectl help`",
-		"- `xcrun xcresulttool help`",
-		"\nRun `xcbolt doctor` for a full report.",
-	}
-	if m.lastErr != "" {
-		lines = append(lines, "\nLast error:\n"+m.lastErr)
-	}
-	return strings.Join(lines, "\n")
-}
+	// Last result
+	resultText := "—"
+	if m.lastResult != nil {
+		status := "success"
+		if !m.lastResult.Success {
+			status = "error"
+		}
+		icon := s.StatusStyle(status).Render(s.StatusIcon(status))
 
-func (m Model) footerView() string {
-	left := m.help.View(m.keys)
-	right := m.toast.View(m.styles)
+		resultText = icon + " " + m.lastResult.Operation
+		if m.lastResult.Duration > 0 {
+			resultText += " " + s.ResultsBar.Duration.Render(m.lastResult.Duration.Round(100*time.Millisecond).String())
+		}
+		if m.lastResult.Message != "" {
+			resultText += " " + s.ResultsBar.Duration.Render(m.lastResult.Message)
+		}
+	}
 
-	// Keep bottom line clean.
-	line := lipgloss.JoinHorizontal(lipgloss.Top,
-		left,
-		lipgloss.NewStyle().Width(max(0, m.width-lipgloss.Width(left)-2)).Align(lipgloss.Right).Render(right),
+	// Keyboard hints (right-aligned)
+	hints := s.ResultsBar.Hints.Render(m.keys.FooterHints())
+
+	// Toast (if visible)
+	toastView := m.toast.View(m.styles)
+
+	// Layout
+	resultWidth := lipgloss.Width(resultText)
+	hintsWidth := lipgloss.Width(hints)
+	toastWidth := lipgloss.Width(toastView)
+
+	spacer := strings.Repeat(" ", maxInt(1, m.width-resultWidth-hintsWidth-toastWidth-6))
+
+	line := lipgloss.JoinHorizontal(lipgloss.Center,
+		resultText,
+		spacer,
+		toastView,
+		"  ",
+		hints,
 	)
-	return line
+
+	return s.ResultsBar.Container.Width(m.width).Render(line)
 }
+
+func (m Model) helpOverlayView() string {
+	s := m.styles
+
+	var b strings.Builder
+
+	// Title
+	b.WriteString(s.Selector.Title.Render("Keyboard Shortcuts"))
+	b.WriteString("\n")
+	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", 44)))
+	b.WriteString("\n\n")
+
+	groups := m.keys.FullHelp()
+	groupNames := []string{"Actions", "Configuration", "Scrolling", "Other"}
+
+	for i, group := range groups {
+		if i < len(groupNames) {
+			b.WriteString(s.Selector.ItemMeta.Render("  " + groupNames[i]))
+			b.WriteString("\n")
+		}
+		for _, binding := range group {
+			keys := binding.Help().Key
+			desc := binding.Help().Desc
+			// Format: key (padded) description
+			keyPart := s.Help.Key.Render(fmt.Sprintf("  %-10s", keys))
+			descPart := s.Help.Desc.Render(desc)
+			b.WriteString(keyPart + descPart + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// Footer
+	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", 44)))
+	b.WriteString("\n")
+	b.WriteString(s.Selector.Hint.Render("Press ? or esc to close"))
+
+	helpContent := b.String()
+
+	// Center the help overlay
+	overlay := lipgloss.Place(
+		m.width,
+		m.height,
+		lipgloss.Center,
+		lipgloss.Center,
+		s.Popup.Container.Render(helpContent),
+	)
+
+	return overlay
+}
+
+func (m Model) wizardView() string {
+	s := m.styles
+	return lipgloss.JoinVertical(lipgloss.Left,
+		m.headerView(),
+		s.Popup.Container.Width(m.width-4).Render(m.wizard.View()),
+	)
+}
+
+func (m Model) selectorOverlayView() string {
+	// Render selector popup centered on screen
+	selectorContent := m.selector.View()
+	return RenderCenteredPopup(selectorContent, m.width, m.height)
+}
+
+func (m Model) paletteOverlayView() string {
+	// Render palette popup centered on screen
+	paletteContent := m.palette.View()
+	return RenderPaletteCentered(paletteContent, m.width, m.height)
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
 
 func keyMatches(msg tea.KeyMsg, b key.Binding) bool {
 	return key.Matches(msg, b)
 }
 
-func max(a, b int) int {
+func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}

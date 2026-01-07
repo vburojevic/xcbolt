@@ -51,7 +51,7 @@ func (t *toastModel) Update() {
 	}
 }
 
-func (t toastModel) View(styles styleSet) string {
+func (t toastModel) View(styles Styles) string {
 	if t.msg == "" {
 		return ""
 	}
@@ -61,5 +61,5 @@ func (t toastModel) View(styles styleSet) string {
 		offset = 0
 	}
 	pad := strings.Repeat(" ", offset)
-	return pad + styles.Toast.Render(t.msg)
+	return pad + styles.Toast.Container.Render(t.msg)
 }
