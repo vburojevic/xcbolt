@@ -1,0 +1,15 @@
+# Binaries
+xcbolt
+*.exe
+*.out
+
+# Go
+/bin/
+/vendor/
+go.sum
+
+# macOS
+.DS_Store
+
+# xcbolt
+.xcbolt/
