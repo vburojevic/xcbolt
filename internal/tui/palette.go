@@ -121,7 +121,16 @@ func DefaultCommands() []Command {
 }
 
 // NewPalette creates a new command palette
-func NewPalette(width int, styles Styles) PaletteModel {
+func NewPalette(screenWidth int, styles Styles) PaletteModel {
+	// Calculate width: 50-60% of screen, clamped to reasonable bounds
+	width := screenWidth * 55 / 100
+	if width < 40 {
+		width = 40
+	}
+	if width > 70 {
+		width = 70
+	}
+
 	ti := textinput.New()
 	ti.Placeholder = "Type a command..."
 	ti.Focus()
@@ -129,7 +138,7 @@ func NewPalette(width int, styles Styles) PaletteModel {
 	ti.Width = width - 6
 
 	commands := DefaultCommands()
-	maxVisible := 10
+	maxVisible := 12
 	if len(commands) < maxVisible {
 		maxVisible = len(commands)
 	}
@@ -240,28 +249,39 @@ func (m *PaletteModel) filterCommands() {
 // View renders the palette
 func (m PaletteModel) View() string {
 	s := m.styles
+	icons := s.Icons
 
 	var b strings.Builder
 
 	// Title
-	b.WriteString(s.Selector.Title.Render("Commands"))
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(s.Colors.Text)
+	b.WriteString(titleStyle.Render("Commands"))
 	b.WriteString("\n")
 
 	// Divider
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", m.width-4)))
+	dividerStyle := lipgloss.NewStyle().Foreground(s.Colors.BorderMuted)
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width-4)))
 	b.WriteString("\n")
 
-	// Input
-	b.WriteString(s.Selector.Input.Render("> " + m.input.View()))
+	// Input with prompt
+	promptStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Accent).
+		Bold(true)
+	b.WriteString(promptStyle.Render("> ") + m.input.View())
 	b.WriteString("\n")
 
 	// Divider
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", m.width-4)))
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width-4)))
 	b.WriteString("\n")
 
 	// Commands
 	if len(m.filtered) == 0 {
-		b.WriteString(s.Logs.EmptyState.Render("No matching commands"))
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.TextMuted).
+			Italic(true)
+		b.WriteString(emptyStyle.Render("  No matching commands"))
 		b.WriteString("\n")
 	} else {
 		// Calculate visible window
@@ -279,6 +299,25 @@ func (m PaletteModel) View() string {
 			}
 		}
 
+		categoryStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.TextSubtle).
+			Bold(true).
+			MarginTop(1)
+
+		itemStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.Text)
+
+		selectedStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.Text).
+			Bold(true)
+
+		shortcutStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.Accent)
+
+		descStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.TextMuted).
+			Italic(true)
+
 		currentCategory := ""
 		for i := start; i < end; i++ {
 			cmd := m.filtered[i]
@@ -290,29 +329,28 @@ func (m PaletteModel) View() string {
 				if i > start {
 					b.WriteString("\n")
 				}
-				b.WriteString(s.Selector.ItemMeta.Render("  " + currentCategory))
+				b.WriteString(categoryStyle.Render("  " + strings.ToUpper(currentCategory)))
 				b.WriteString("\n")
 			}
 
 			// Build command line
 			var line string
 			if isSelected {
-				line = s.Icons.ChevronRight + " "
-				line += s.Selector.ItemSelected.Render(cmd.Name)
+				line = s.StatusStyle("running").Render(icons.ChevronRight) + " "
+				line += selectedStyle.Render(cmd.Name)
 			} else {
 				line = "  "
-				line += s.Selector.Item.Render(cmd.Name)
+				line += itemStyle.Render(cmd.Name)
 			}
 
-			// Add shortcut if present
+			// Add shortcut if present (right-aligned would be nice but tricky)
 			if cmd.Shortcut != "" {
-				line += " " + s.Selector.ItemMeta.Render("["+cmd.Shortcut+"]")
+				line += " " + shortcutStyle.Render("["+cmd.Shortcut+"]")
 			}
 
-			// Add description
+			// Add description when filtering (shows context for fuzzy matches)
 			if cmd.Description != "" && m.input.Value() != "" {
-				// Only show description when filtering (to keep list compact otherwise)
-				line += " " + s.Selector.Hint.Render(cmd.Description)
+				line += " " + descStyle.Render(cmd.Description)
 			}
 
 			b.WriteString(line)
@@ -321,15 +359,26 @@ func (m PaletteModel) View() string {
 	}
 
 	// Divider
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", m.width-4)))
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width-4)))
 	b.WriteString("\n")
 
 	// Hints
-	hints := "↑↓ navigate  ⏎ run  esc cancel"
-	b.WriteString(s.Selector.Hint.Render(hints))
+	hintKeyStyle := lipgloss.NewStyle().Foreground(s.Colors.Accent)
+	hintDescStyle := lipgloss.NewStyle().Foreground(s.Colors.TextSubtle)
+	hints := hintKeyStyle.Render("↑↓") + hintDescStyle.Render(" navigate  ") +
+		hintKeyStyle.Render("⏎") + hintDescStyle.Render(" run  ") +
+		hintKeyStyle.Render("esc") + hintDescStyle.Render(" cancel")
+	b.WriteString(hints)
 
 	content := b.String()
-	return s.Selector.Container.Width(m.width).Render(content)
+
+	// Container with border
+	containerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(s.Colors.Border).
+		Padding(1, 2)
+
+	return containerStyle.Width(m.width).Render(content)
 }
 
 // =============================================================================

@@ -77,6 +77,14 @@ type Model struct {
 	mode         Mode
 	selectorType SelectorType
 
+	// Layout components (new)
+	layout      Layout
+	sidebar     Sidebar
+	statusBar   StatusBar
+	progressBar ProgressBar
+	hintsBar    HintsBar
+	summaryCard SummaryCard
+
 	// Components
 	spinner  spinner.Model
 	viewport viewport.Model
@@ -101,6 +109,8 @@ type Model struct {
 	// Progress tracking (for stage indicators)
 	currentStage  string
 	stageProgress string // e.g., "23/47"
+	progressCur   int
+	progressTotal int
 
 	// Results
 	lastResult *Result
@@ -124,6 +134,14 @@ func NewModel(projectRoot string, configPath string) Model {
 	// Load user state (ignore errors - use defaults if not found)
 	state, _ := core.LoadState()
 
+	// Initialize new layout components
+	layout := NewLayout()
+	sidebar := NewSidebar()
+	statusBar := NewStatusBar()
+	progressBar := NewProgressBar()
+	hintsBar := NewHintsBar()
+	summaryCard := NewSummaryCard()
+
 	return Model{
 		projectRoot: projectRoot,
 		configPath:  configPath,
@@ -136,6 +154,13 @@ func NewModel(projectRoot string, configPath string) Model {
 		autoFollow:  true,
 		mode:        ModeNormal,
 		state:       state,
+		// New layout components
+		layout:      layout,
+		sidebar:     sidebar,
+		statusBar:   statusBar,
+		progressBar: progressBar,
+		hintsBar:    hintsBar,
+		summaryCard: summaryCard,
 	}
 }
 
@@ -189,7 +214,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Update layout dimensions
+		m.layout.SetSize(m.width, m.height)
 		m.updateViewportSize()
+		// Update sidebar dimensions
+		m.sidebar.Width = m.layout.SidebarWidth
+		m.sidebar.Height = m.layout.SidebarHeight()
+		m.sidebar.Compact = m.layout.SidebarCollapse
 		if m.mode == ModeWizard {
 			m.wizard = newWizard(m.info, m.cfg, m.width)
 		}
@@ -270,6 +301,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
+		// Also update status bar spinner
+		m.statusBar.Spinner = m.spinner
 		cmds = append(cmds, cmd)
 	}
 
@@ -295,8 +328,8 @@ func (m *Model) openSchemeSelector() {
 	}
 
 	items := SchemeItems(m.info.Schemes)
-	width := minInt(m.width-10, 60)
-	m.selector = NewSelector("Select Scheme", items, width, m.styles)
+	// Pass screen width - selector calculates its own width (50-60%)
+	m.selector = NewSelector("Select Scheme", items, m.width, m.styles)
 	m.selectorType = SelectorScheme
 	m.mode = ModeSelector
 }
@@ -332,8 +365,8 @@ func (m *Model) openDestinationSelector() {
 		return
 	}
 
-	width := minInt(m.width-10, 60)
-	m.selector = NewSelector("Select Destination", items, width, m.styles)
+	// Pass screen width - selector calculates its own width (50-60%)
+	m.selector = NewSelector("Select Destination", items, m.width, m.styles)
 	m.selectorType = SelectorDestination
 	m.mode = ModeSelector
 }
@@ -393,8 +426,8 @@ func minInt(a, b int) int {
 }
 
 func (m *Model) openPalette() {
-	width := minInt(m.width-10, 60)
-	m.palette = NewPalette(width, m.styles)
+	// Pass screen width - palette calculates its own width (50-60%)
+	m.palette = NewPalette(m.width, m.styles)
 	m.mode = ModePalette
 }
 
@@ -456,15 +489,72 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 }
 
 func (m *Model) updateViewportSize() {
-	// Layout heights: header(2) + actionbar(1) + border(1) + resultsbar(1) + border(1) = 6
-	headerH := 2
-	actionBarH := 1
-	resultsBarH := 1
-	bordersH := 2
-	totalChrome := headerH + actionBarH + resultsBarH + bordersH
+	// Use new layout calculations
+	m.viewport.Width = maxInt(0, m.layout.ContentWidth()-2)
+	m.viewport.Height = maxInt(0, m.layout.ContentHeight()-2)
+}
 
-	m.viewport.Width = maxInt(0, m.width-2)
-	m.viewport.Height = maxInt(0, m.height-totalChrome)
+// executeSidebarItem executes the currently selected sidebar item
+func (m *Model) executeSidebarItem() tea.Cmd {
+	item := m.sidebar.SelectedItem()
+	if item == nil {
+		return nil
+	}
+
+	switch item.ID {
+	case "build":
+		if !m.running {
+			return m.startOp("build")
+		}
+	case "run":
+		if !m.running {
+			return m.startOp("run")
+		}
+	case "test":
+		if !m.running {
+			return m.startOp("test")
+		}
+	case "clean":
+		if !m.running {
+			return m.startOp("clean")
+		}
+	case "scheme":
+		m.openSchemeSelector()
+	case "destination":
+		m.openDestinationSelector()
+	}
+
+	return nil
+}
+
+// syncSidebarState syncs the sidebar display with current model state
+func (m *Model) syncSidebarState() {
+	// Update config values
+	scheme := m.cfg.Scheme
+	if scheme == "" {
+		scheme = "Not set"
+	}
+	m.sidebar.SetConfigValue("scheme", scheme)
+
+	dest := "Not set"
+	if m.cfg.Destination.Name != "" {
+		dest = m.cfg.Destination.Name
+	} else if m.cfg.Destination.Kind != "" {
+		dest = string(m.cfg.Destination.Kind)
+	}
+	m.sidebar.SetConfigValue("destination", dest)
+
+	// Update status bar
+	m.statusBar.Scheme = m.cfg.Scheme
+	m.statusBar.Destination = m.cfg.Destination.Name
+	m.statusBar.DestOS = m.cfg.Destination.OS
+	m.statusBar.Running = m.running
+	m.statusBar.RunningCmd = m.runningCmd
+	m.statusBar.Stage = m.currentStage
+	m.statusBar.Progress = m.stageProgress
+
+	// Update sidebar focus
+	m.sidebar.Focused = m.layout.IsFocused(PaneSidebar)
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
@@ -526,6 +616,19 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 			m.setStatus("Canceled")
 		}
 
+	// Sidebar navigation when focused
+	case keyMatches(msg, m.keys.ScrollUp) && m.layout.IsFocused(PaneSidebar):
+		m.sidebar.MoveUp()
+		return nil
+
+	case keyMatches(msg, m.keys.ScrollDown) && m.layout.IsFocused(PaneSidebar):
+		m.sidebar.MoveDown()
+		return nil
+
+	case keyMatches(msg, m.keys.SelectEnter) && m.layout.IsFocused(PaneSidebar):
+		// Execute selected sidebar item
+		return m.executeSidebarItem()
+
 	case keyMatches(msg, m.keys.Build):
 		if !m.running {
 			return m.startOp("build")
@@ -576,6 +679,17 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.ScrollBottom):
 		m.viewport.GotoBottom()
 		m.autoFollow = true
+
+	case keyMatches(msg, m.keys.ToggleSidebar):
+		m.layout.ToggleSidebar()
+		m.updateViewportSize()
+
+	case keyMatches(msg, m.keys.SwitchFocus):
+		m.layout.SwitchFocus()
+		m.sidebar.Focused = m.layout.IsFocused(PaneSidebar)
+
+	case keyMatches(msg, m.keys.Search):
+		m.setStatus("Search not implemented yet")
 	}
 
 	return nil
@@ -683,6 +797,8 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 	if strings.Contains(msg, "Starting") || strings.Contains(msg, "Build started") {
 		m.currentStage = ""
 		m.stageProgress = ""
+		m.progressCur = 0
+		m.progressTotal = 0
 		return
 	}
 
@@ -721,10 +837,16 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 				if len(words2) > 0 {
 					num2 := words2[0]
 					m.stageProgress = num1 + "/" + num2
+					// Parse numbers for progress bar
+					fmt.Sscanf(num1, "%d", &m.progressCur)
+					fmt.Sscanf(num2, "%d", &m.progressTotal)
 				}
 			}
 		}
 	}
+
+	// Update progress bar
+	m.progressBar.SetProgress(m.progressCur, m.progressTotal, m.currentStage)
 }
 
 func (m *Model) handleOpDone(msg opDoneMsg) {
@@ -735,12 +857,25 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	m.doneCh = nil
 	m.currentStage = ""
 	m.stageProgress = ""
+	m.progressCur = 0
+	m.progressTotal = 0
+
+	// Hide progress bar
+	m.progressBar.Hide()
+	m.layout.ShowProgressBar = false
 
 	if msg.cfg.Version != 0 {
 		m.cfg = msg.cfg
 	}
 
 	success := msg.err == nil
+
+	// Update sidebar status
+	if success {
+		m.sidebar.SetItemStatus(msg.cmd, StatusSuccess)
+	} else {
+		m.sidebar.SetItemStatus(msg.cmd, StatusError)
+	}
 
 	if msg.build != nil {
 		m.lastBuild = *msg.build
@@ -750,6 +885,9 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Duration:  msg.build.Duration,
 			Timestamp: time.Now(),
 		}
+		// Show summary card
+		durationStr := msg.build.Duration.Round(100 * time.Millisecond).String()
+		m.summaryCard.Show("Build", success, durationStr, "")
 	}
 	if msg.run != nil {
 		m.lastRun = *msg.run
@@ -759,6 +897,8 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Message:   fmt.Sprintf("PID %d", msg.run.PID),
 			Timestamp: time.Now(),
 		}
+		// Show summary card
+		m.summaryCard.Show("Run", success, "", fmt.Sprintf("PID %d", msg.run.PID))
 	}
 	if msg.test != nil {
 		m.lastTest = *msg.test
@@ -768,6 +908,9 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Duration:  msg.test.Duration,
 			Timestamp: time.Now(),
 		}
+		// Show summary card
+		durationStr := msg.test.Duration.Round(100 * time.Millisecond).String()
+		m.summaryCard.Show("Test", success, durationStr, "")
 	}
 
 	if msg.err != nil {
@@ -781,6 +924,21 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 func (m *Model) startOp(name string) tea.Cmd {
 	m.running = true
 	m.runningCmd = name
+
+	// Update sidebar status
+	m.sidebar.ClearAllStatus()
+	m.sidebar.SetItemStatus(name, StatusRunning)
+
+	// Update progress bar
+	m.progressBar.Visible = true
+	m.progressBar.Stage = "Starting..."
+	m.progressBar.Current = 0
+	m.progressBar.Total = 0
+	m.layout.ShowProgressBar = true
+
+	// Hide summary card
+	m.summaryCard.Hide()
+
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
 
@@ -932,17 +1090,108 @@ func (m Model) View() string {
 }
 
 func (m Model) mainView() string {
-	header := m.headerView()
-	actionBar := m.actionBarView()
-	logs := m.logsView()
-	resultsBar := m.resultsBarView()
+	// Sync state to components
+	m.syncSidebarState()
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		actionBar,
-		logs,
-		resultsBar,
+	// Build status bar content
+	statusBarContent := m.statusBar.View(m.width, m.styles)
+
+	// Build progress bar content (if running)
+	progressBarContent := ""
+	if m.running {
+		m.layout.ShowProgressBar = true
+		progressBarContent = m.progressBar.View(m.width, m.styles)
+	} else {
+		m.layout.ShowProgressBar = false
+	}
+
+	// Build sidebar content
+	sidebarContent := m.sidebar.View(m.styles)
+
+	// Build main content (logs)
+	contentArea := m.contentView()
+
+	// Build hints bar
+	hintsBarContent := m.hintsBar.View(m.width, m.styles)
+
+	// Use layout to render everything
+	return m.layout.RenderFullLayout(
+		statusBarContent,
+		progressBarContent,
+		sidebarContent,
+		contentArea,
+		hintsBarContent,
+		m.styles,
 	)
+}
+
+// contentView renders the main content area (logs)
+func (m Model) contentView() string {
+	s := m.styles
+
+	if len(m.logLines) == 0 {
+		return m.emptyStateView()
+	}
+
+	// Check if we should show summary card
+	if m.summaryCard.Visible {
+		card := m.summaryCard.View(s)
+		logs := m.viewport.View()
+		return lipgloss.JoinVertical(lipgloss.Left, card, "", logs)
+	}
+
+	return m.viewport.View()
+}
+
+// emptyStateView renders the empty state with icon + message + hint
+func (m Model) emptyStateView() string {
+	s := m.styles
+	icons := s.Icons
+
+	var lines []string
+
+	// Check if we have a valid configuration
+	isConfigured := m.cfg.Scheme != "" && (m.cfg.Workspace != "" || m.cfg.Project != "")
+
+	iconStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextSubtle).
+		MarginBottom(1)
+
+	msgStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextMuted).
+		MarginBottom(1)
+
+	hintStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextSubtle)
+
+	if isConfigured {
+		// Ready to work
+		lines = append(lines, iconStyle.Render(icons.Idle))
+		lines = append(lines, msgStyle.Render("Ready to build"))
+		lines = append(lines, hintStyle.Render("r run  b build  t test"))
+	} else if m.info.Schemes != nil && len(m.info.Schemes) > 0 {
+		// Context loaded but not configured
+		lines = append(lines, iconStyle.Render(icons.Settings))
+		lines = append(lines, msgStyle.Render("Press i to configure"))
+		lines = append(lines, hintStyle.Render("s scheme  d destination  ? help"))
+	} else {
+		// Context loading or no project detected
+		lines = append(lines, iconStyle.Render(m.spinner.View()))
+		lines = append(lines, msgStyle.Render("Loading project..."))
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Center, lines...)
+
+	// Center in the available space
+	centered := lipgloss.Place(
+		m.layout.ContentWidth(),
+		m.layout.ContentHeight(),
+		lipgloss.Center,
+		lipgloss.Center,
+		content,
+	)
+
+	return centered
 }
 
 func (m Model) headerView() string {
@@ -1132,39 +1381,75 @@ func (m Model) resultsBarView() string {
 func (m Model) helpOverlayView() string {
 	s := m.styles
 
+	// Calculate width: 50-60% of screen, clamped
+	width := m.width * 55 / 100
+	if width < 50 {
+		width = 50
+	}
+	if width > 80 {
+		width = 80
+	}
+
 	var b strings.Builder
 
 	// Title
-	b.WriteString(s.Selector.Title.Render("Keyboard Shortcuts"))
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(s.Colors.Text)
+	b.WriteString(titleStyle.Render("Keyboard Shortcuts"))
 	b.WriteString("\n")
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", 44)))
+
+	dividerStyle := lipgloss.NewStyle().Foreground(s.Colors.BorderMuted)
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", width-4)))
 	b.WriteString("\n\n")
 
 	groups := m.keys.FullHelp()
-	groupNames := []string{"Actions", "Configuration", "Scrolling", "Other"}
+	groupNames := []string{"ACTIONS", "CONFIGURATION", "LAYOUT", "SCROLLING", "OTHER"}
+
+	sectionStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextSubtle).
+		Bold(true)
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Accent).
+		Width(12)
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Text)
 
 	for i, group := range groups {
 		if i < len(groupNames) {
-			b.WriteString(s.Selector.ItemMeta.Render("  " + groupNames[i]))
+			b.WriteString(sectionStyle.Render("  " + groupNames[i]))
 			b.WriteString("\n")
 		}
 		for _, binding := range group {
 			keys := binding.Help().Key
 			desc := binding.Help().Desc
 			// Format: key (padded) description
-			keyPart := s.Help.Key.Render(fmt.Sprintf("  %-10s", keys))
-			descPart := s.Help.Desc.Render(desc)
+			keyPart := keyStyle.Render("  " + keys)
+			descPart := descStyle.Render(desc)
 			b.WriteString(keyPart + descPart + "\n")
 		}
 		b.WriteString("\n")
 	}
 
 	// Footer
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", 44)))
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", width-4)))
 	b.WriteString("\n")
-	b.WriteString(s.Selector.Hint.Render("Press ? or esc to close"))
 
-	helpContent := b.String()
+	hintKeyStyle := lipgloss.NewStyle().Foreground(s.Colors.Accent)
+	hintDescStyle := lipgloss.NewStyle().Foreground(s.Colors.TextSubtle)
+	hints := "Press " + hintKeyStyle.Render("?") + hintDescStyle.Render(" or ") +
+		hintKeyStyle.Render("esc") + hintDescStyle.Render(" to close")
+	b.WriteString(hints)
+
+	// Container with border
+	containerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(s.Colors.Border).
+		Padding(1, 2)
+
+	helpContent := containerStyle.Width(width).Render(b.String())
 
 	// Center the help overlay
 	overlay := lipgloss.Place(
@@ -1172,7 +1457,7 @@ func (m Model) helpOverlayView() string {
 		m.height,
 		lipgloss.Center,
 		lipgloss.Center,
-		s.Popup.Container.Render(helpContent),
+		helpContent,
 	)
 
 	return overlay

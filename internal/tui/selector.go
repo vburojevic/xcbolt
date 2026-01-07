@@ -80,10 +80,11 @@ func fuzzyMatch(haystack, needle string) bool {
 // SelectorModel is a fuzzy-search selector popup
 type SelectorModel struct {
 	// Configuration
-	title      string
-	items      []SelectorItem
-	width      int
-	maxVisible int
+	title       string
+	items       []SelectorItem
+	recentItems []SelectorItem // Recent items to pin at top
+	width       int
+	maxVisible  int
 
 	// State
 	input    textinput.Model
@@ -103,14 +104,23 @@ type SelectorResult struct {
 }
 
 // NewSelector creates a new selector
-func NewSelector(title string, items []SelectorItem, width int, styles Styles) SelectorModel {
+func NewSelector(title string, items []SelectorItem, screenWidth int, styles Styles) SelectorModel {
+	// Calculate width: 50-60% of screen, clamped
+	width := screenWidth * 55 / 100
+	if width < 40 {
+		width = 40
+	}
+	if width > 70 {
+		width = 70
+	}
+
 	ti := textinput.New()
 	ti.Placeholder = "Type to filter..."
 	ti.Focus()
 	ti.CharLimit = 50
 	ti.Width = width - 6
 
-	maxVisible := 8
+	maxVisible := 10
 	if len(items) < maxVisible {
 		maxVisible = len(items)
 	}
@@ -125,6 +135,13 @@ func NewSelector(title string, items []SelectorItem, width int, styles Styles) S
 		cursor:     0,
 		styles:     styles,
 	}
+}
+
+// NewSelectorWithRecents creates a selector with recent items pinned at top
+func NewSelectorWithRecents(title string, items []SelectorItem, recents []SelectorItem, screenWidth int, styles Styles) SelectorModel {
+	m := NewSelector(title, items, screenWidth, styles)
+	m.recentItems = recents
+	return m
 }
 
 // Init initializes the selector
@@ -227,36 +244,92 @@ func (m *SelectorModel) filterItems() {
 // View renders the selector
 func (m SelectorModel) View() string {
 	s := m.styles
+	icons := s.Icons
 
 	var b strings.Builder
 
 	// Title
-	b.WriteString(s.Selector.Title.Render(m.title))
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(s.Colors.Text)
+	b.WriteString(titleStyle.Render(m.title))
 	b.WriteString("\n")
 
 	// Divider
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", m.width-4)))
+	dividerStyle := lipgloss.NewStyle().Foreground(s.Colors.BorderMuted)
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width-4)))
 	b.WriteString("\n")
 
-	// Input
-	b.WriteString(s.Selector.Input.Render("> " + m.input.View()))
+	// Input with prompt
+	promptStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Accent).
+		Bold(true)
+	b.WriteString(promptStyle.Render("> ") + m.input.View())
 	b.WriteString("\n")
 
 	// Divider
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", m.width-4)))
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width-4)))
 	b.WriteString("\n")
+
+	// Styles for items
+	sectionStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextSubtle).
+		Bold(true)
+
+	itemStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Text)
+
+	selectedStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Text).
+		Bold(true)
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextMuted)
+
+	// Recent items section (only if not filtering and we have recents)
+	if m.input.Value() == "" && len(m.recentItems) > 0 {
+		b.WriteString(sectionStyle.Render("  RECENT"))
+		b.WriteString("\n")
+
+		for i, item := range m.recentItems {
+			if i >= 3 { // Show max 3 recents
+				break
+			}
+			isSelected := i == m.cursor
+
+			line := m.renderItem(item, isSelected, icons, itemStyle, selectedStyle, descStyle, s)
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+
+		// ALL section header
+		b.WriteString(sectionStyle.Render("  ALL"))
+		b.WriteString("\n")
+	}
 
 	// Items
 	if len(m.filtered) == 0 {
-		b.WriteString(s.Logs.EmptyState.Render("No matches"))
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.TextMuted).
+			Italic(true)
+		b.WriteString(emptyStyle.Render("  No matches"))
 		b.WriteString("\n")
 	} else {
-		// Calculate visible window
+		// Calculate visible window (adjust cursor for recents)
+		visibleCursor := m.cursor
+		if m.input.Value() == "" && len(m.recentItems) > 0 {
+			// Cursor might be in recents section
+			recentsCount := minInt(3, len(m.recentItems))
+			if visibleCursor >= recentsCount {
+				visibleCursor -= recentsCount
+			}
+		}
+
 		start := 0
 		end := len(m.filtered)
 		if end > m.maxVisible {
-			// Center the cursor in the visible window
-			start = m.cursor - m.maxVisible/2
+			start = visibleCursor - m.maxVisible/2
 			if start < 0 {
 				start = 0
 			}
@@ -269,44 +342,71 @@ func (m SelectorModel) View() string {
 
 		for i := start; i < end; i++ {
 			item := m.filtered[i]
-			isSelected := i == m.cursor
-
-			// Build item line
-			var line string
-			if isSelected {
-				line = s.Icons.ChevronRight + " "
-				line += s.Selector.ItemSelected.Render(item.Title)
-			} else {
-				line = "  "
-				line += s.Selector.Item.Render(item.Title)
+			// Calculate if selected (accounting for recents offset)
+			itemIdx := i
+			if m.input.Value() == "" && len(m.recentItems) > 0 {
+				itemIdx += minInt(3, len(m.recentItems))
 			}
+			isSelected := itemIdx == m.cursor
 
-			// Add description if present
-			if item.Description != "" {
-				line += " " + s.Selector.ItemMeta.Render(item.Description)
-			}
-
-			// Add meta tag if present
-			if item.Meta != "" {
-				line += " " + s.Selector.ItemMeta.Render(item.Meta)
-			}
-
+			line := m.renderItem(item, isSelected, icons, itemStyle, selectedStyle, descStyle, s)
 			b.WriteString(line)
 			b.WriteString("\n")
 		}
 	}
 
 	// Divider
-	b.WriteString(s.Selector.Divider.Render(strings.Repeat("─", m.width-4)))
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", m.width-4)))
 	b.WriteString("\n")
 
 	// Hints
-	hints := "↑↓ navigate  ⏎ select  esc cancel"
-	b.WriteString(s.Selector.Hint.Render(hints))
+	hintKeyStyle := lipgloss.NewStyle().Foreground(s.Colors.Accent)
+	hintDescStyle := lipgloss.NewStyle().Foreground(s.Colors.TextSubtle)
+	hints := hintKeyStyle.Render("↑↓") + hintDescStyle.Render(" navigate  ") +
+		hintKeyStyle.Render("⏎") + hintDescStyle.Render(" select  ") +
+		hintKeyStyle.Render("esc") + hintDescStyle.Render(" cancel")
+	b.WriteString(hints)
 
-	// Wrap in container
-	content := b.String()
-	return s.Selector.Container.Width(m.width).Render(content)
+	// Container with border
+	containerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(s.Colors.Border).
+		Padding(1, 2)
+
+	return containerStyle.Width(m.width).Render(b.String())
+}
+
+// renderItem renders a single selector item
+func (m SelectorModel) renderItem(item SelectorItem, isSelected bool, icons Icons, itemStyle, selectedStyle, descStyle lipgloss.Style, s Styles) string {
+	var line string
+	if isSelected {
+		line = s.StatusStyle("running").Render(icons.ChevronRight) + " "
+		line += selectedStyle.Render(item.Title)
+	} else {
+		line = "  "
+		line += itemStyle.Render(item.Title)
+	}
+
+	// Add description if present
+	if item.Description != "" {
+		line += " " + descStyle.Render(item.Description)
+	}
+
+	// Add meta tag with status coloring
+	if item.Meta != "" {
+		metaStyle := descStyle
+		// Color-code device state
+		if item.Meta == "[booted]" {
+			metaStyle = s.StatusStyle("success")
+		} else if item.Meta == "[shutdown]" {
+			metaStyle = s.StatusStyle("idle")
+		} else if item.Meta == "[device]" {
+			metaStyle = s.StatusStyle("running")
+		}
+		line += " " + metaStyle.Render(item.Meta)
+	}
+
+	return line
 }
 
 // =============================================================================

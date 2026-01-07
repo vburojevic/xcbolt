@@ -46,6 +46,11 @@ type keyMap struct {
 	Init    key.Binding
 	Refresh key.Binding
 
+	// Layout
+	ToggleSidebar key.Binding
+	SwitchFocus   key.Binding
+	Search        key.Binding
+
 	// Viewport/Scroll
 	ScrollUp         key.Binding
 	ScrollDown       key.Binding
@@ -125,6 +130,20 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("^R", "refresh"),
 		),
 
+		// Layout
+		ToggleSidebar: key.NewBinding(
+			key.WithKeys("ctrl+b"),
+			key.WithHelp("^B", "toggle sidebar"),
+		),
+		SwitchFocus: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("Tab", "switch focus"),
+		),
+		Search: key.NewBinding(
+			key.WithKeys("ctrl+f", "/"),
+			key.WithHelp("^F", "search logs"),
+		),
+
 		// Viewport/Scroll
 		ScrollUp: key.NewBinding(
 			key.WithKeys("up", "k"),
@@ -189,12 +208,14 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		// Actions row
 		{k.Build, k.Run, k.Test, k.Clean, k.Stop},
-		// Selectors row
-		{k.Scheme, k.Destination, k.Palette},
-		// Navigation row
+		// Configuration row
+		{k.Scheme, k.Destination, k.Palette, k.Init},
+		// Layout row
+		{k.SwitchFocus, k.ToggleSidebar, k.Search},
+		// Scrolling row
 		{k.ScrollUp, k.ScrollDown, k.ScrollTop, k.ScrollBottom, k.ToggleAutoFollow},
-		// Misc row
-		{k.Init, k.Refresh, k.Cancel, k.Help, k.Quit},
+		// Other row
+		{k.Refresh, k.Cancel, k.Help, k.Quit},
 	}
 }
 
