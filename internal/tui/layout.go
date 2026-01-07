@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -91,15 +93,20 @@ func (l Layout) CalculateIssuesPanelHeight(issueCount int) int {
 
 // RenderStatusBar renders the full-width status bar at the top
 func (l Layout) RenderStatusBar(content string, styles Styles) string {
-	style := lipgloss.NewStyle().
+	// Render content with padding (no Height constraint)
+	contentStyle := lipgloss.NewStyle().
 		Width(l.Width).
-		Height(l.StatusBarHeight).
-		Padding(0, 1).
-		BorderStyle(lipgloss.Border{Bottom: "─"}).
-		BorderForeground(styles.Colors.Border).
-		BorderBottom(true)
+		Padding(0, 1)
 
-	return style.Render(content)
+	rendered := contentStyle.Render(content)
+
+	// Add border below as a separate line
+	borderStyle := lipgloss.NewStyle().
+		Width(l.Width).
+		Foreground(styles.Colors.Border)
+	border := borderStyle.Render(strings.Repeat("─", l.Width))
+
+	return lipgloss.JoinVertical(lipgloss.Left, rendered, border)
 }
 
 // RenderProgressBar renders the progress bar below status bar
