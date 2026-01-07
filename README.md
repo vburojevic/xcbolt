@@ -102,6 +102,29 @@ All commands support:
 
 This outputs newline-delimited JSON events (easy to pipe into other tools).
 
+### Log formatting (optional)
+
+By default, xcbolt streams raw `xcodebuild` output. If you have a formatter installed,
+you can enable pretty logs for both CLI and TUI:
+
+```bash
+./xcbolt --log-format auto build       # prefer xcpretty, fallback to xcbeautify
+./xcbolt --log-format xcpretty test
+```
+
+Config (in `.xcbolt/config.json`):
+
+```json
+{
+  "xcodebuild": {
+    "logFormat": "auto",
+    "logFormatArgs": []
+  }
+}
+```
+
+`--json` output always emits raw `xcodebuild` lines.
+
 ---
 
 ## Project layout

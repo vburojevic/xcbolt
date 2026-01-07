@@ -29,6 +29,13 @@ type contextLoadedMsg struct {
 	err  error
 }
 
+type ConfigOverrides struct {
+	LogFormat        string
+	LogFormatArgs    []string
+	HasLogFormat     bool
+	HasLogFormatArgs bool
+}
+
 type opDoneMsg struct {
 	cmd   string
 	err   error
@@ -61,6 +68,7 @@ type Model struct {
 	projectRoot string
 	configPath  string
 	cfg         core.Config
+	cfgOverride ConfigOverrides
 	info        core.ContextInfo
 	state       core.State // User state (recents, favorites)
 
@@ -120,7 +128,7 @@ type Model struct {
 }
 
 // NewModel creates a new TUI model
-func NewModel(projectRoot string, configPath string) Model {
+func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
@@ -143,6 +151,7 @@ func NewModel(projectRoot string, configPath string) Model {
 	return Model{
 		projectRoot: projectRoot,
 		configPath:  configPath,
+		cfgOverride: overrides,
 		styles:      DefaultStyles(),
 		keys:        defaultKeyMap(),
 		help:        h,
@@ -170,7 +179,7 @@ func (m *Model) setStatus(msg string) {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
-		loadContextCmd(m.projectRoot, m.configPath),
+		loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride),
 	)
 }
 
@@ -178,12 +187,13 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func loadContextCmd(projectRoot, configPath string) tea.Cmd {
+func loadContextCmd(projectRoot, configPath string, overrides ConfigOverrides) tea.Cmd {
 	return func() tea.Msg {
 		cfg, err := core.LoadConfig(projectRoot, configPath)
 		if err != nil {
 			return contextLoadedMsg{err: err}
 		}
+		applyConfigOverrides(&cfg, overrides)
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 
@@ -193,6 +203,15 @@ func loadContextCmd(projectRoot, configPath string) tea.Cmd {
 			return contextLoadedMsg{err: err}
 		}
 		return contextLoadedMsg{info: info, cfg: cfg2}
+	}
+}
+
+func applyConfigOverrides(cfg *core.Config, overrides ConfigOverrides) {
+	if overrides.HasLogFormat {
+		cfg.Xcodebuild.LogFormat = overrides.LogFormat
+	}
+	if overrides.HasLogFormatArgs {
+		cfg.Xcodebuild.LogFormatArgs = overrides.LogFormatArgs
 	}
 }
 
@@ -274,7 +293,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.setStatus("Saved config")
-		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath))
+		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride))
 
 	case eventMsg:
 		ev := core.Event(msg)
@@ -289,7 +308,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case opDoneMsg:
 		m.handleOpDone(msg)
-		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath))
+		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride))
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -461,7 +480,7 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		return m.wizard.Init()
 	case "refresh":
 		m.setStatus("Refreshing…")
-		return loadContextCmd(m.projectRoot, m.configPath)
+		return loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride)
 
 	// Utilities
 	case "doctor":
@@ -593,7 +612,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.Refresh):
 		m.setStatus("Refreshing…")
-		return loadContextCmd(m.projectRoot, m.configPath)
+		return loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride)
 
 	case keyMatches(msg, m.keys.ToggleAutoFollow):
 		m.autoFollow = !m.autoFollow
@@ -703,14 +722,19 @@ func (m *Model) saveRecentCombo() {
 }
 
 func (m *Model) handleEvent(ev core.Event) {
-	line := m.formatEventLine(ev)
-	m.appendLog(line)
+	if ev.Type != "log_raw" {
+		line := m.formatEventLine(ev)
+		m.appendLog(line)
+	}
 
 	// Track progress for stage indicators
 	m.parseProgressFromEvent(ev)
 }
 
 func (m *Model) parseProgressFromEvent(ev core.Event) {
+	if ev.Type == "log" && isPrettyEvent(ev) {
+		return
+	}
 	msg := ev.Msg
 
 	// Reset progress on new operation
@@ -767,6 +791,19 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 
 	// Update progress bar
 	m.progressBar.SetProgress(m.progressCur, m.progressTotal, m.currentStage)
+}
+
+func isPrettyEvent(ev core.Event) bool {
+	m, ok := ev.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+	v, ok := m["pretty"]
+	if !ok {
+		return false
+	}
+	pretty, ok := v.(bool)
+	return ok && pretty
 }
 
 func (m *Model) handleOpDone(msg opDoneMsg) {

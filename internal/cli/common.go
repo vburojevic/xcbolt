@@ -9,10 +9,12 @@ import (
 )
 
 type GlobalFlags struct {
-	JSON    bool
-	Config  string
-	Project string
-	Verbose bool
+	JSON          bool
+	Config        string
+	Project       string
+	Verbose       bool
+	LogFormat     string
+	LogFormatArgs []string
 }
 
 func resolveProjectRoot(projectFlag string) (string, error) {
@@ -43,6 +45,12 @@ func NewAppContext(flags GlobalFlags) (AppContext, error) {
 	cfg, err := core.LoadConfig(root, flags.Config)
 	if err != nil {
 		return AppContext{}, err
+	}
+	if flags.LogFormat != "" {
+		cfg.Xcodebuild.LogFormat = flags.LogFormat
+	}
+	if len(flags.LogFormatArgs) > 0 {
+		cfg.Xcodebuild.LogFormatArgs = flags.LogFormatArgs
 	}
 	emit := core.Emitter(core.NewTextEmitter(os.Stdout))
 	if flags.JSON {

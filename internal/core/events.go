@@ -64,6 +64,9 @@ func NewTextEmitter(w io.Writer) *TextEmitter { return &TextEmitter{w: w} }
 func (e *TextEmitter) Emit(ev Event) {
 	// Simple human output. The TUI has its own rendering.
 	if ev.Msg != "" {
+		if ev.Type == "log_raw" {
+			return
+		}
 		if ev.Level != "" {
 			fmt.Fprintf(e.w, "[%s] %s\n", ev.Level, ev.Msg)
 			return
@@ -85,6 +88,14 @@ func Status(cmd, msg string, data any) Event {
 
 func Log(cmd, msg string) Event {
 	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg}
+}
+
+func LogPretty(cmd, msg string) Event {
+	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: map[string]any{"pretty": true}}
+}
+
+func LogRaw(cmd, msg string) Event {
+	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log_raw", Level: "info", Msg: msg}
 }
 
 func Warn(cmd, msg string) Event {

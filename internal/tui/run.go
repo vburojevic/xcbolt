@@ -4,8 +4,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func Run(projectRoot string, configPath string) error {
-	m := NewModel(projectRoot, configPath)
+func Run(projectRoot string, configPath string, overrides ConfigOverrides) error {
+	m := NewModel(projectRoot, configPath, overrides)
 	p := tea.NewProgram(
 		m,
 		tea.WithAltScreen(),

@@ -29,8 +29,10 @@ type Destination struct {
 }
 
 type XcodebuildConfig struct {
-	Options []string          `json:"options,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	Options       []string          `json:"options,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	LogFormat     string            `json:"logFormat,omitempty"`
+	LogFormatArgs []string          `json:"logFormatArgs,omitempty"`
 }
 
 type LaunchConfig struct {
@@ -65,7 +67,7 @@ func DefaultConfig(projectRoot string) Config {
 		Destination:       Destination{Kind: DestAuto},
 		DerivedDataPath:   filepath.Join(projectRoot, ".xcbolt", "DerivedData"),
 		ResultBundlesPath: filepath.Join(projectRoot, ".xcbolt", "Results"),
-		Xcodebuild:        XcodebuildConfig{Env: map[string]string{}, Options: []string{}},
+		Xcodebuild:        XcodebuildConfig{Env: map[string]string{}, Options: []string{}, LogFormat: "auto", LogFormatArgs: []string{}},
 		Launch:            LaunchConfig{Env: map[string]string{}, Options: []string{}},
 	}
 }
@@ -108,6 +110,9 @@ func LoadConfig(projectRoot string, overridePath string) (Config, error) {
 	}
 	if cfg.Xcodebuild.Env == nil {
 		cfg.Xcodebuild.Env = map[string]string{}
+	}
+	if cfg.Xcodebuild.LogFormat == "" {
+		cfg.Xcodebuild.LogFormat = "auto"
 	}
 	if cfg.Launch.Env == nil {
 		cfg.Launch.Env = map[string]string{}

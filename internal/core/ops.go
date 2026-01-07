@@ -64,14 +64,16 @@ func Build(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (B
 	args = append(args, cfg.Xcodebuild.Options...)
 
 	emitMaybe(emit, Status("build", "Build started", map[string]any{"resultBundle": bundlePath}))
+	sink := newXcodebuildLogSink(ctx, "build", cfg, emit)
 	res, err := RunStreaming(ctx, CmdSpec{
 		Path:       "xcrun",
 		Args:       append([]string{"xcodebuild"}, args...),
 		Dir:        projectRoot,
 		Env:        cfg.Xcodebuild.Env,
-		StdoutLine: func(s string) { emitMaybe(emit, Log("build", s)) },
-		StderrLine: func(s string) { emitMaybe(emit, Log("build", s)) },
+		StdoutLine: sink.HandleLine,
+		StderrLine: sink.HandleLine,
 	})
+	sink.Close()
 
 	cfg.LastResultBundle = bundlePath
 	if err != nil {
@@ -112,14 +114,16 @@ func Test(ctx context.Context, projectRoot string, cfg Config, onlyTesting []str
 	args = append(args, cfg.Xcodebuild.Options...)
 
 	emitMaybe(emit, Status("test", "Tests started", map[string]any{"resultBundle": bundlePath}))
+	sink := newXcodebuildLogSink(ctx, "test", cfg, emit)
 	res, err := RunStreaming(ctx, CmdSpec{
 		Path:       "xcrun",
 		Args:       append([]string{"xcodebuild"}, args...),
 		Dir:        projectRoot,
 		Env:        cfg.Xcodebuild.Env,
-		StdoutLine: func(s string) { emitMaybe(emit, Log("test", s)) },
-		StderrLine: func(s string) { emitMaybe(emit, Log("test", s)) },
+		StdoutLine: sink.HandleLine,
+		StderrLine: sink.HandleLine,
 	})
+	sink.Close()
 
 	cfg.LastResultBundle = bundlePath
 
