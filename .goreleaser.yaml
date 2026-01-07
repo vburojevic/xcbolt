@@ -37,6 +37,7 @@ brews:
       owner: vburojevic
       name: homebrew-tap
       branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     commit_author:
       name: "GitHub Actions"
       email: "actions@github.com"
