@@ -21,6 +21,21 @@ This project is intentionally **self-contained** and uses Apple tooling via `xcr
 
 ---
 
+## Installation (Homebrew)
+
+```bash
+brew tap vburojevic/xcbolt
+brew install xcbolt
+```
+
+Or in one line:
+
+```bash
+brew install vburojevic/xcbolt/xcbolt
+```
+
+---
+
 ## Quick start
 
 ```bash

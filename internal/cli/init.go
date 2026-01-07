@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/huh/v2"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/xcbolt/xcbolt/internal/core"
 )

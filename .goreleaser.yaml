@@ -1,0 +1,41 @@
+project_name: xcbolt
+
+builds:
+  - id: xcbolt
+    main: ./cmd/xcbolt
+    binary: xcbolt
+    goos:
+      - darwin
+    goarch:
+      - arm64
+      - amd64
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+brews:
+  - name: xcbolt
+    description: "Modern Xcode CLI + TUI"
+    homepage: "https://github.com/vburojevic/xcbolt"
+    license: "MIT"
+    folder: Formula
+    install: |
+      bin.install "xcbolt"
+    test: |
+      system "#{bin}/xcbolt", "--help"
+    repository:
+      owner: vburojevic
+      name: xcbolt
+      branch: main
+    commit_author:
+      name: "GitHub Actions"
+      email: "actions@github.com"

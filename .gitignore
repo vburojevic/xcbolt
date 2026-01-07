@@ -6,7 +6,6 @@ xcbolt
 # Go
 /bin/
 /vendor/
-go.sum
 
 # macOS
 .DS_Store
