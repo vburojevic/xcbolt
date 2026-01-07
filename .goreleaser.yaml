@@ -3,7 +3,7 @@ project_name: xcbolt
 
 builds:
   - id: xcbolt
-    main: ./cmd/xcbolt
+    main: ./cmd/xcbolt/main.go
     binary: xcbolt
     goos:
       - darwin
