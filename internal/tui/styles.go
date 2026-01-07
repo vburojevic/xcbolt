@@ -239,7 +239,6 @@ type Styles struct {
 	ResultsBar ResultsBarStyles
 	Popup      PopupStyles
 	Selector   SelectorStyles
-	Toast      ToastStyles
 	Help       HelpStyles
 }
 
@@ -303,14 +302,6 @@ type SelectorStyles struct {
 	Hint         lipgloss.Style
 }
 
-// ToastStyles for notification toasts
-type ToastStyles struct {
-	Container lipgloss.Style
-	Success   lipgloss.Style
-	Error     lipgloss.Style
-	Info      lipgloss.Style
-}
-
 // HelpStyles for help overlay
 type HelpStyles struct {
 	Container lipgloss.Style
@@ -335,7 +326,6 @@ func DefaultStyles() Styles {
 		ResultsBar: defaultResultsBarStyles(colors),
 		Popup:      defaultPopupStyles(colors),
 		Selector:   defaultSelectorStyles(colors),
-		Toast:      defaultToastStyles(colors),
 		Help:       defaultHelpStyles(colors),
 	}
 }
@@ -496,26 +486,6 @@ func defaultSelectorStyles(c Colors) SelectorStyles {
 		Hint: lipgloss.NewStyle().
 			Foreground(c.TextSubtle).
 			MarginTop(1),
-	}
-}
-
-func defaultToastStyles(c Colors) ToastStyles {
-	return ToastStyles{
-		Container: lipgloss.NewStyle().
-			Padding(0, 1).
-			Border(lipgloss.RoundedBorder()),
-
-		Success: lipgloss.NewStyle().
-			Foreground(c.Success).
-			BorderForeground(c.Success),
-
-		Error: lipgloss.NewStyle().
-			Foreground(c.Error).
-			BorderForeground(c.Error),
-
-		Info: lipgloss.NewStyle().
-			Foreground(c.Accent).
-			BorderForeground(c.Accent),
 	}
 }
 

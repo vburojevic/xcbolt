@@ -80,10 +80,12 @@ type Model struct {
 	// Components
 	spinner  spinner.Model
 	viewport viewport.Model
-	toast    toastModel
 	wizard   wizardModel
 	selector SelectorModel
 	palette  PaletteModel
+
+	// Status message (shown in results bar)
+	statusMsg string
 
 	// Logs
 	logLines   []string
@@ -133,9 +135,13 @@ func NewModel(projectRoot string, configPath string) Model {
 		logLines:    []string{},
 		autoFollow:  true,
 		mode:        ModeNormal,
-		toast:       newToast(),
 		state:       state,
 	}
+}
+
+// setStatus updates the status message shown in the results bar
+func (m *Model) setStatus(msg string) {
+	m.statusMsg = msg
 }
 
 // Init initializes the model
@@ -143,7 +149,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		loadContextCmd(m.projectRoot, m.configPath),
-		tickCmd(),
 	)
 }
 
@@ -190,13 +195,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Responsive: warn if terminal is too small
 		if m.width < 80 || m.height < 20 {
-			m.toast.Show("Terminal too small (min 80x20)", 2*time.Second)
+			m.setStatus("Terminal too small (min 80x20)")
 		}
 
 	case contextLoadedMsg:
 		if msg.err != nil {
 			m.lastErr = msg.err.Error()
-			m.toast.Show("Context load failed", 2*time.Second)
+			m.setStatus("Context load failed")
 			break
 		}
 		m.info = msg.info
@@ -207,17 +212,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if needsConfig && m.tryAutoDetect() {
 			// Auto-config applied - save and show toast
 			if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err == nil {
-				m.toast.Show("Ready", 1200*time.Millisecond)
+				m.setStatus("Ready")
 			} else {
-				m.toast.Show("Context ready", 1200*time.Millisecond)
+				m.setStatus("Context ready")
 			}
 		} else {
-			m.toast.Show("Context ready", 1200*time.Millisecond)
+			m.setStatus("Context ready")
 		}
 
 	case tickMsg:
-		m.toast.Update()
-		cmds = append(cmds, tickCmd())
+		// Only continue ticking if we need animation (spinner while running)
+		if m.running {
+			cmds = append(cmds, tickCmd())
+		}
 
 	case tea.KeyMsg:
 		cmd := m.handleKeyPress(msg)
@@ -228,21 +235,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wizardDoneMsg:
 		m.mode = ModeNormal
 		if msg.aborted {
-			m.toast.Show("Init canceled", 1200*time.Millisecond)
+			m.setStatus("Init canceled")
 			break
 		}
 		if msg.err != nil {
 			m.lastErr = msg.err.Error()
-			m.toast.Show("Init failed", 2*time.Second)
+			m.setStatus("Init failed")
 			break
 		}
 		m.cfg = msg.cfg
 		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
 			m.lastErr = err.Error()
-			m.toast.Show("Save failed", 2*time.Second)
+			m.setStatus("Save failed")
 			break
 		}
-		m.toast.Show("Saved .xcbolt/config.json", 1400*time.Millisecond)
+		m.setStatus("Saved config")
 		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath))
 
 	case eventMsg:
@@ -283,7 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) openSchemeSelector() {
 	if len(m.info.Schemes) == 0 {
-		m.toast.Show("No schemes found", 1*time.Second)
+		m.setStatus("No schemes found")
 		return
 	}
 
@@ -321,7 +328,7 @@ func (m *Model) openDestinationSelector() {
 
 	items := DestinationItems(sims, devices)
 	if len(items) == 0 {
-		m.toast.Show("No destinations found", 1*time.Second)
+		m.setStatus("No destinations found")
 		return
 	}
 
@@ -335,7 +342,7 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 	switch m.selectorType {
 	case SelectorScheme:
 		m.cfg.Scheme = item.ID
-		m.toast.Show("Scheme: "+item.Title, 1*time.Second)
+		m.setStatus("Scheme: " + item.Title)
 		// Save config
 		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
 			m.lastErr = err.Error()
@@ -352,7 +359,7 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 					Platform: "iOS Simulator",
 					OS:       sim.OSVersion,
 				}
-				m.toast.Show("Destination: "+item.Title, 1*time.Second)
+				m.setStatus("Destination: " + item.Title)
 				if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
 					m.lastErr = err.Error()
 				}
@@ -368,7 +375,7 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 					Platform: dev.Platform,
 					OS:       dev.OSVersion,
 				}
-				m.toast.Show("Destination: "+item.Title, 1*time.Second)
+				m.setStatus("Destination: " + item.Title)
 				if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
 					m.lastErr = err.Error()
 				}
@@ -411,11 +418,11 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 			return m.startOp("clean")
 		}
 	case "stop":
-		m.toast.Show("Stop not implemented yet", 1*time.Second)
+		m.setStatus("Stop not implemented yet")
 
 	// Archive/Profile (not implemented yet)
 	case "archive", "archive-appstore", "archive-adhoc", "profile", "analyze":
-		m.toast.Show(cmd.Name+" coming soon", 1*time.Second)
+		m.setStatus(cmd.Name + " coming soon")
 
 	// Configuration
 	case "scheme":
@@ -427,16 +434,16 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		m.wizard = newWizard(m.info, m.cfg, m.width)
 		return m.wizard.Init()
 	case "refresh":
-		m.toast.Show("Refreshing…", 1*time.Second)
+		m.setStatus("Refreshing…")
 		return loadContextCmd(m.projectRoot, m.configPath)
 
 	// Utilities
 	case "doctor":
-		m.toast.Show("Doctor not implemented in TUI", 1*time.Second)
+		m.setStatus("Doctor not implemented in TUI")
 	case "logs":
-		m.toast.Show("Use CLI: xcbolt logs", 1*time.Second)
+		m.setStatus("Use CLI: xcbolt logs")
 	case "simulator-boot", "simulator-shutdown":
-		m.toast.Show("Use CLI: xcbolt simulator", 1*time.Second)
+		m.setStatus("Use CLI: xcbolt simulator")
 
 	// Navigation
 	case "help":
@@ -516,7 +523,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.Cancel):
 		if m.running && m.cancelFn != nil {
 			m.cancelFn()
-			m.toast.Show("Canceled", 900*time.Millisecond)
+			m.setStatus("Canceled")
 		}
 
 	case keyMatches(msg, m.keys.Build):
@@ -554,16 +561,16 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		return m.wizard.Init()
 
 	case keyMatches(msg, m.keys.Refresh):
-		m.toast.Show("Refreshing…", 1*time.Second)
+		m.setStatus("Refreshing…")
 		return loadContextCmd(m.projectRoot, m.configPath)
 
 	case keyMatches(msg, m.keys.ToggleAutoFollow):
 		m.autoFollow = !m.autoFollow
 		if m.autoFollow {
 			m.viewport.GotoBottom()
-			m.toast.Show("Following logs", 800*time.Millisecond)
+			m.setStatus("Following logs")
 		} else {
-			m.toast.Show("Paused log follow", 800*time.Millisecond)
+			m.setStatus("Paused log follow")
 		}
 
 	case keyMatches(msg, m.keys.ScrollBottom):
@@ -765,9 +772,9 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 
 	if msg.err != nil {
 		m.lastErr = msg.err.Error()
-		m.toast.Show(strings.ToUpper(msg.cmd)+" failed", 2*time.Second)
+		m.setStatus(strings.ToUpper(msg.cmd) + " failed")
 	} else {
-		m.toast.Show(strings.ToUpper(msg.cmd)+" done", 1200*time.Millisecond)
+		m.setStatus(strings.ToUpper(msg.cmd) + " done")
 	}
 }
 
@@ -822,7 +829,7 @@ func (m *Model) startOp(name string) tea.Cmd {
 		}
 		close(done)
 	}()
-	return tea.Batch(waitForEvent(events), waitForDone(done))
+	return tea.Batch(waitForEvent(events), waitForDone(done), tickCmd())
 }
 
 type chanEmitter struct {
@@ -1095,24 +1102,27 @@ func (m Model) resultsBarView() string {
 		}
 	}
 
+	// Status message (in middle)
+	statusView := ""
+	if m.statusMsg != "" {
+		statusView = s.ResultsBar.Duration.Render("│ " + m.statusMsg)
+	}
+
 	// Keyboard hints (right-aligned)
 	hints := s.ResultsBar.Hints.Render(m.keys.FooterHints())
-
-	// Toast (if visible)
-	toastView := m.toast.View(m.styles)
 
 	// Layout
 	resultWidth := lipgloss.Width(resultText)
 	hintsWidth := lipgloss.Width(hints)
-	toastWidth := lipgloss.Width(toastView)
+	statusWidth := lipgloss.Width(statusView)
 
-	spacer := strings.Repeat(" ", maxInt(1, m.width-resultWidth-hintsWidth-toastWidth-6))
+	spacer := strings.Repeat(" ", maxInt(1, m.width-resultWidth-hintsWidth-statusWidth-6))
 
 	line := lipgloss.JoinHorizontal(lipgloss.Center,
 		resultText,
-		spacer,
-		toastView,
 		"  ",
+		statusView,
+		spacer,
 		hints,
 	)
 
