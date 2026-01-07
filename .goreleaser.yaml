@@ -35,7 +35,7 @@ brews:
       system "#{bin}/xcbolt", "--help"
     repository:
       owner: vburojevic
-      name: xcbolt
+      name: homebrew-tap
       branch: main
     commit_author:
       name: "GitHub Actions"
