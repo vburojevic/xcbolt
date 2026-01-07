@@ -1,5 +1,5 @@
 # Binaries
-xcbolt
+/xcbolt
 *.exe
 *.out
 
@@ -12,3 +12,4 @@ xcbolt
 
 # xcbolt
 .xcbolt/
+dist/
