@@ -15,6 +15,7 @@ import (
 type StatusBar struct {
 	// Project info
 	ProjectName string
+	GitBranch   string
 	Scheme      string
 	Destination string
 	DestOS      string
@@ -24,6 +25,16 @@ type StatusBar struct {
 	RunningCmd string
 	Stage      string
 	Progress   string
+
+	// Last result (shown when not running)
+	HasLastResult     bool
+	LastResultSuccess bool
+	LastResultOp      string
+	LastResultTime    string
+
+	// Error/warning counts (shown when not running and issues exist)
+	ErrorCount   int
+	WarningCount int
 
 	// Spinner for animation
 	Spinner spinner.Model
@@ -58,6 +69,14 @@ func (s StatusBar) View(width int, styles Styles) string {
 		projectPart = projectStyle.Render(s.ProjectName)
 	}
 
+	// Git branch (if available)
+	branchPart := ""
+	if s.GitBranch != "" {
+		branchStyle := lipgloss.NewStyle().
+			Foreground(styles.Colors.TextMuted)
+		branchPart = branchStyle.Render(icons.Branch + " " + s.GitBranch)
+	}
+
 	// Scheme
 	schemeText := "No scheme"
 	if s.Scheme != "" {
@@ -90,6 +109,9 @@ func (s StatusBar) View(width int, styles Styles) string {
 
 	if projectPart != "" {
 		leftParts = append(leftParts, sep, projectPart)
+	}
+	if branchPart != "" {
+		leftParts = append(leftParts, sep, branchPart)
 	}
 	leftParts = append(leftParts, sep, schemePart)
 	leftParts = append(leftParts, sep, destPart)
@@ -131,12 +153,49 @@ func (s StatusBar) renderStatus(styles Styles, icons Icons) string {
 		return icon + " " + labelStyle.Render(label)
 	}
 
-	// Idle status
-	icon := styles.StatusStyle("idle").Render(icons.Idle)
-	labelStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextMuted)
+	// Build result + idle status
+	var parts []string
 
-	return icon + " " + labelStyle.Render("idle")
+	// Error/warning counts: [✗ 3  ⚠ 2]
+	if s.ErrorCount > 0 || s.WarningCount > 0 {
+		bracketStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+		var countParts []string
+
+		if s.ErrorCount > 0 {
+			errStyle := styles.StatusStyle("error")
+			countParts = append(countParts, errStyle.Render(icons.Error+" "+itoa(s.ErrorCount)))
+		}
+		if s.WarningCount > 0 {
+			warnStyle := styles.StatusStyle("warning")
+			countParts = append(countParts, warnStyle.Render(icons.Warning+" "+itoa(s.WarningCount)))
+		}
+
+		counts := strings.Join(countParts, " ")
+		parts = append(parts, bracketStyle.Render("[")+counts+bracketStyle.Render("]"))
+	} else if s.HasLastResult {
+		// Last result indicator: [✓ 2.3s] or [✗] (only if no error counts)
+		resultIcon := icons.Success
+		resultStatus := "success"
+		if !s.LastResultSuccess {
+			resultIcon = icons.Error
+			resultStatus = "error"
+		}
+
+		resultStyle := styles.StatusStyle(resultStatus)
+		resultText := resultStyle.Render(resultIcon)
+		if s.LastResultTime != "" {
+			resultText += " " + lipgloss.NewStyle().Foreground(styles.Colors.TextMuted).Render(s.LastResultTime)
+		}
+
+		bracketStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+		parts = append(parts, bracketStyle.Render("[")+resultText+bracketStyle.Render("]"))
+	}
+
+	// Idle indicator
+	idleIcon := styles.StatusStyle("idle").Render(icons.Idle)
+	parts = append(parts, idleIcon)
+
+	return strings.Join(parts, " ")
 }
 
 // =============================================================================
@@ -264,20 +323,68 @@ type HintItem struct {
 // NewHintsBar creates a new hints bar with default hints
 func NewHintsBar() HintsBar {
 	return HintsBar{
-		Hints: []HintItem{
-			{Key: "b", Desc: "build"},
-			{Key: "r", Desc: "run"},
-			{Key: "t", Desc: "test"},
-			{Key: "s", Desc: "scheme"},
-			{Key: "d", Desc: "dest"},
-			{Key: "^K", Desc: "commands"},
-			{Key: "?", Desc: "help"},
-		},
+		Hints: DefaultHints(),
+	}
+}
+
+// DefaultHints returns the default hints for normal mode
+func DefaultHints() []HintItem {
+	return []HintItem{
+		{Key: "b", Desc: "build"},
+		{Key: "r", Desc: "run"},
+		{Key: "t", Desc: "test"},
+		{Key: "s", Desc: "scheme"},
+		{Key: "d", Desc: "dest"},
+		{Key: "^K", Desc: "commands"},
+		{Key: "?", Desc: "help"},
+	}
+}
+
+// IssuesFocusedHints returns hints when issues panel is focused
+func IssuesFocusedHints() []HintItem {
+	return []HintItem{
+		{Key: "j/k", Desc: "navigate"},
+		{Key: "⏎", Desc: "expand"},
+		{Key: "o", Desc: "open"},
+		{Key: "tab", Desc: "logs"},
+		{Key: "e", Desc: "hide"},
+		{Key: "?", Desc: "help"},
+	}
+}
+
+// NormalWithIssuesHints returns hints for normal mode when issues exist
+func NormalWithIssuesHints() []HintItem {
+	return []HintItem{
+		{Key: "b", Desc: "build"},
+		{Key: "r", Desc: "run"},
+		{Key: "t", Desc: "test"},
+		{Key: "e", Desc: "errors"},
+		{Key: "^K", Desc: "commands"},
+		{Key: "?", Desc: "help"},
 	}
 }
 
 // View renders the hints bar
 func (h HintsBar) View(width int, styles Styles) string {
+	return h.renderHints(h.Hints, styles)
+}
+
+// ViewWithContext renders hints based on context
+func (h HintsBar) ViewWithContext(width int, styles Styles, issuesFocused bool, hasIssues bool) string {
+	var hints []HintItem
+
+	if issuesFocused {
+		hints = IssuesFocusedHints()
+	} else if hasIssues {
+		hints = NormalWithIssuesHints()
+	} else {
+		hints = DefaultHints()
+	}
+
+	return h.renderHints(hints, styles)
+}
+
+func (h HintsBar) renderHints(hints []HintItem, styles Styles) string {
 	var parts []string
 
 	keyStyle := lipgloss.NewStyle().
@@ -287,98 +394,14 @@ func (h HintsBar) View(width int, styles Styles) string {
 	sepStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.BorderMuted)
 
-	for i, hint := range h.Hints {
+	for i, hint := range hints {
 		part := keyStyle.Render(hint.Key) + ":" + descStyle.Render(hint.Desc)
 		parts = append(parts, part)
 
-		if i < len(h.Hints)-1 {
+		if i < len(hints)-1 {
 			parts = append(parts, sepStyle.Render("  "))
 		}
 	}
 
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
-}
-
-// =============================================================================
-// Summary Card - Shows operation result briefly
-// =============================================================================
-
-// SummaryCard displays a brief result summary
-type SummaryCard struct {
-	Visible   bool
-	Operation string
-	Success   bool
-	Duration  string
-	Message   string
-}
-
-// NewSummaryCard creates a new summary card
-func NewSummaryCard() SummaryCard {
-	return SummaryCard{Visible: false}
-}
-
-// Show displays the summary card with the given result
-func (c *SummaryCard) Show(operation string, success bool, duration, message string) {
-	c.Visible = true
-	c.Operation = operation
-	c.Success = success
-	c.Duration = duration
-	c.Message = message
-}
-
-// Hide hides the summary card
-func (c *SummaryCard) Hide() {
-	c.Visible = false
-}
-
-// View renders the summary card
-func (c SummaryCard) View(styles Styles) string {
-	if !c.Visible {
-		return ""
-	}
-
-	icons := styles.Icons
-
-	// Status icon
-	status := "success"
-	icon := icons.Success
-	if !c.Success {
-		status = "error"
-		icon = icons.Error
-	}
-
-	iconPart := styles.StatusStyle(status).Render(icon)
-
-	// Operation name
-	opStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(styles.Colors.Text)
-	opPart := opStyle.Render(c.Operation)
-
-	// Duration
-	durStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextMuted)
-	durPart := ""
-	if c.Duration != "" {
-		durPart = durStyle.Render(" · " + c.Duration)
-	}
-
-	// Message
-	msgStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextMuted)
-	msgPart := ""
-	if c.Message != "" {
-		msgPart = msgStyle.Render(" · " + c.Message)
-	}
-
-	content := lipgloss.JoinHorizontal(lipgloss.Center,
-		iconPart, " ", opPart, durPart, msgPart)
-
-	// Card container
-	cardStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(styles.Colors.Border).
-		Padding(0, 2)
-
-	return cardStyle.Render(content)
 }

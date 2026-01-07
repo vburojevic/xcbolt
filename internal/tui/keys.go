@@ -64,6 +64,11 @@ type keyMap struct {
 	SelectUp    key.Binding
 	SelectDown  key.Binding
 	SelectEnter key.Binding
+
+	// Issues panel navigation
+	ToggleIssues key.Binding
+	FocusIssues  key.Binding
+	OpenInEditor key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -184,6 +189,20 @@ func defaultKeyMap() keyMap {
 		SelectEnter: key.NewBinding(
 			key.WithKeys("enter"),
 			key.WithHelp("⏎", "select"),
+		),
+
+		// Issues panel navigation
+		ToggleIssues: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "toggle errors"),
+		),
+		FocusIssues: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "focus errors"),
+		),
+		OpenInEditor: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "open in editor"),
 		),
 	}
 }

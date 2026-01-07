@@ -15,19 +15,21 @@ type Layout struct {
 	Height int
 
 	// Reserved heights
-	StatusBarHeight int
-	ProgressHeight  int
-	HintsBarHeight  int
-	ShowProgressBar bool
-	ShowHintsBar    bool
+	StatusBarHeight   int
+	ProgressHeight    int
+	HintsBarHeight    int
+	IssuesPanelHeight int
+	ShowProgressBar   bool
+	ShowHintsBar      bool
+	ShowIssuesPanel   bool
 }
 
 // NewLayout creates a new layout with default settings
 func NewLayout() Layout {
 	return Layout{
-		StatusBarHeight: 1,
+		StatusBarHeight: 2, // 1 line content + 1 line border
 		ProgressHeight:  1,
-		HintsBarHeight:  1,
+		HintsBarHeight:  2, // 1 line content + 1 line border
 		ShowProgressBar: false,
 		ShowHintsBar:    true,
 	}
@@ -55,11 +57,32 @@ func (l Layout) ContentHeight() int {
 	if l.ShowProgressBar {
 		h -= l.ProgressHeight
 	}
+	if l.ShowIssuesPanel {
+		h -= l.IssuesPanelHeight
+	}
 	if l.ShowHintsBar {
 		h -= l.HintsBarHeight
 	}
 
 	return maxInt(0, h)
+}
+
+// CalculateIssuesPanelHeight calculates adaptive height based on issue count
+func (l Layout) CalculateIssuesPanelHeight(issueCount int) int {
+	// 1 line header + 1 line separator + issues + possible "more" line
+	desired := 3 + minInt(issueCount, 5)
+
+	// Minimum 4 lines, max 40% of screen
+	minHeight := 4
+	maxHeight := l.Height * 40 / 100
+
+	if desired < minHeight {
+		desired = minHeight
+	}
+	if desired > maxHeight {
+		desired = maxHeight
+	}
+	return desired
 }
 
 // =============================================================================
@@ -111,8 +134,25 @@ func (l Layout) RenderHintsBar(content string, styles Styles) string {
 	return style.Render(content)
 }
 
+// RenderIssuesPanel renders the issues panel between content and hints bar
+func (l Layout) RenderIssuesPanel(content string, styles Styles) string {
+	if !l.ShowIssuesPanel {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().
+		Width(l.Width).
+		Height(l.IssuesPanelHeight).
+		Padding(0, 1).
+		BorderStyle(lipgloss.Border{Top: "─"}).
+		BorderForeground(styles.Colors.Border).
+		BorderTop(true)
+
+	return style.Render(content)
+}
+
 // RenderFullLayout composes all layout elements
-func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar string, styles Styles) string {
+func (l Layout) RenderFullLayout(statusBar, progressBar, content, issuesPanel, hintsBar string, styles Styles) string {
 	var parts []string
 
 	// Status bar at top
@@ -128,6 +168,11 @@ func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar strin
 		Width(l.Width).
 		Height(l.ContentHeight())
 	parts = append(parts, contentStyle.Render(content))
+
+	// Issues panel (if visible)
+	if l.ShowIssuesPanel && issuesPanel != "" {
+		parts = append(parts, l.RenderIssuesPanel(issuesPanel, styles))
+	}
 
 	// Hints bar at bottom
 	if l.ShowHintsBar {

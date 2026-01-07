@@ -58,8 +58,16 @@ func (p *IssuesPanel) Clear() {
 	p.SelectedIdx = 0
 }
 
-// AddIssue adds a new issue
+// AddIssue adds a new issue with deduplication
 func (p *IssuesPanel) AddIssue(issue Issue) {
+	// Deduplicate by file:line:message
+	for _, existing := range p.Issues {
+		if existing.FilePath == issue.FilePath &&
+			existing.Line == issue.Line &&
+			existing.Message == issue.Message {
+			return // Skip duplicate
+		}
+	}
 	p.Issues = append(p.Issues, issue)
 }
 

@@ -96,6 +96,9 @@ type Icons struct {
 	Help     string
 	Command  string
 
+	// Git
+	Branch string
+
 	// Misc
 	Dot       string
 	Check     string
@@ -133,6 +136,9 @@ func NerdFontIcons() Icons {
 		Settings: "\uf013", //  (nf-fa-cog)
 		Help:     "\uf059", //  (nf-fa-question_circle)
 		Command:  "\uf120", //  (nf-fa-terminal)
+
+		// Git
+		Branch: "\ue725", //  (nf-dev-git_branch)
 
 		// Misc
 		Dot:       "\uf111", //
@@ -172,6 +178,9 @@ func UnicodeIcons() Icons {
 		Settings: "⚙",
 		Help:     "?",
 		Command:  "⌘",
+
+		// Git
+		Branch: "",
 
 		// Misc
 		Dot:       "●",

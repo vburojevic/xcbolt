@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -70,7 +71,8 @@ type Model struct {
 	cfg         core.Config
 	cfgOverride ConfigOverrides
 	info        core.ContextInfo
-	state       core.State // User state (recents, favorites)
+	state       core.State  // User state (recents, favorites)
+	gitBranch   string      // Current git branch
 
 	// Window dimensions
 	width  int
@@ -90,14 +92,18 @@ type Model struct {
 	statusBar   StatusBar
 	progressBar ProgressBar
 	hintsBar    HintsBar
-	summaryCard SummaryCard
 
 	// Components
-	spinner  spinner.Model
-	viewport viewport.Model
-	wizard   wizardModel
-	selector SelectorModel
-	palette  PaletteModel
+	spinner     spinner.Model
+	viewport    viewport.Model
+	wizard      wizardModel
+	selector    SelectorModel
+	palette     PaletteModel
+	issuesPanel IssuesPanel
+
+	// Issues panel state
+	showIssues    bool
+	issuesFocused bool
 
 	// Status message (shown in results bar)
 	statusMsg string
@@ -146,7 +152,7 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 	statusBar := NewStatusBar()
 	progressBar := NewProgressBar()
 	hintsBar := NewHintsBar()
-	summaryCard := NewSummaryCard()
+	issuesPanel := NewIssuesPanel()
 
 	return Model{
 		projectRoot: projectRoot,
@@ -166,7 +172,7 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		statusBar:   statusBar,
 		progressBar: progressBar,
 		hintsBar:    hintsBar,
-		summaryCard: summaryCard,
+		issuesPanel: issuesPanel,
 	}
 }
 
@@ -250,6 +256,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.info = msg.info
 		m.cfg = msg.cfg
 
+		// Fetch git branch
+		m.gitBranch = getGitBranch(m.projectRoot)
+
 		// Auto-detect: if not configured but context found, auto-select defaults
 		needsConfig := m.cfg.Scheme == "" || (m.cfg.Workspace == "" && m.cfg.Project == "")
 		if needsConfig && m.tryAutoDetect() {
@@ -316,10 +325,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Also update status bar spinner
 		m.statusBar.Spinner = m.spinner
 		cmds = append(cmds, cmd)
+
+	case statusMsg:
+		m.setStatus(string(msg))
 	}
 
-	// Viewport scrolling (only in normal mode)
-	if m.mode == ModeNormal {
+	// Viewport scrolling (only in normal mode and not focused on issues)
+	if m.mode == ModeNormal && !m.issuesFocused {
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
@@ -508,6 +520,18 @@ func (m *Model) updateViewportSize() {
 
 // syncStatusBarState syncs the status bar display with current model state
 func (m *Model) syncStatusBarState() {
+	// Project name from workspace or project
+	if m.cfg.Workspace != "" {
+		m.statusBar.ProjectName = filepath.Base(m.cfg.Workspace)
+		// Remove .xcworkspace extension
+		m.statusBar.ProjectName = strings.TrimSuffix(m.statusBar.ProjectName, ".xcworkspace")
+	} else if m.cfg.Project != "" {
+		m.statusBar.ProjectName = filepath.Base(m.cfg.Project)
+		// Remove .xcodeproj extension
+		m.statusBar.ProjectName = strings.TrimSuffix(m.statusBar.ProjectName, ".xcodeproj")
+	}
+
+	m.statusBar.GitBranch = m.gitBranch
 	m.statusBar.Scheme = m.cfg.Scheme
 	m.statusBar.Destination = m.cfg.Destination.Name
 	m.statusBar.DestOS = m.cfg.Destination.OS
@@ -515,6 +539,10 @@ func (m *Model) syncStatusBarState() {
 	m.statusBar.RunningCmd = m.runningCmd
 	m.statusBar.Stage = m.currentStage
 	m.statusBar.Progress = m.stageProgress
+
+	// Error/warning counts
+	m.statusBar.ErrorCount = m.issuesPanel.ErrorCount()
+	m.statusBar.WarningCount = m.issuesPanel.WarningCount()
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
@@ -558,6 +586,32 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 			if !result.Aborted && result.Command != nil {
 				return m.executePaletteCommand(result.Command)
 			}
+		}
+		return nil
+	}
+
+	// Issues panel focused - handle navigation
+	if m.issuesFocused && m.showIssues {
+		switch {
+		case keyMatches(msg, m.keys.ScrollUp):
+			m.issuesPanel.MoveUp()
+			return nil
+		case keyMatches(msg, m.keys.ScrollDown):
+			m.issuesPanel.MoveDown()
+			return nil
+		case keyMatches(msg, m.keys.SelectEnter):
+			m.issuesPanel.ToggleExpand()
+			return nil
+		case keyMatches(msg, m.keys.OpenInEditor):
+			return m.openIssueInEditor()
+		case keyMatches(msg, m.keys.FocusIssues), keyMatches(msg, m.keys.Cancel):
+			m.issuesFocused = false
+			return nil
+		case keyMatches(msg, m.keys.ToggleIssues):
+			m.toggleIssuesPanel()
+			return nil
+		case keyMatches(msg, m.keys.Quit):
+			return tea.Quit
 		}
 		return nil
 	}
@@ -629,10 +683,70 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.Search):
 		m.setStatus("Search not implemented yet")
+
+	case keyMatches(msg, m.keys.ToggleIssues):
+		m.toggleIssuesPanel()
+
+	case keyMatches(msg, m.keys.FocusIssues):
+		if m.showIssues && m.issuesPanel.HasIssues() {
+			m.issuesFocused = true
+		}
 	}
 
 	return nil
 }
+
+// toggleIssuesPanel toggles the visibility of the issues panel
+func (m *Model) toggleIssuesPanel() {
+	if m.issuesPanel.HasIssues() {
+		m.showIssues = !m.showIssues
+		m.layout.ShowIssuesPanel = m.showIssues
+		if m.showIssues {
+			m.layout.IssuesPanelHeight = m.layout.CalculateIssuesPanelHeight(len(m.issuesPanel.Issues))
+		}
+		m.updateViewportSize()
+		m.issuesFocused = false
+	}
+}
+
+// openIssueInEditor opens the selected issue in the user's editor
+func (m *Model) openIssueInEditor() tea.Cmd {
+	if m.issuesPanel.SelectedIdx >= len(m.issuesPanel.Issues) {
+		return nil
+	}
+
+	issue := m.issuesPanel.Issues[m.issuesPanel.SelectedIdx]
+	if issue.FilePath == "" {
+		m.setStatus("No file location")
+		return nil
+	}
+
+	// Build editor command
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "open" // macOS default
+	}
+
+	// Format: editor +line file or open -t file
+	var cmd *exec.Cmd
+	if editor == "open" {
+		cmd = exec.Command("open", "-t", issue.FilePath)
+	} else if issue.Line > 0 {
+		cmd = exec.Command(editor, fmt.Sprintf("+%d", issue.Line), issue.FilePath)
+	} else {
+		cmd = exec.Command(editor, issue.FilePath)
+	}
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return statusMsg("Failed to open editor")
+		}
+		return nil
+	})
+}
+
+// statusMsg is a message for setting status
+type statusMsg string
 
 // tryAutoDetect attempts to auto-configure if the project has a single obvious setup.
 // Returns true if auto-configuration was applied.
@@ -722,13 +836,58 @@ func (m *Model) saveRecentCombo() {
 }
 
 func (m *Model) handleEvent(ev core.Event) {
-	if ev.Type != "log_raw" {
-		line := m.formatEventLine(ev)
-		m.appendLog(line)
-	}
+	line := m.formatEventLine(ev)
+	m.appendLog(line)
 
 	// Track progress for stage indicators
 	m.parseProgressFromEvent(ev)
+
+	// Collect issues from events
+	m.collectIssueFromEvent(ev)
+}
+
+// collectIssueFromEvent parses errors/warnings from events and adds them to the panel
+func (m *Model) collectIssueFromEvent(ev core.Event) {
+	switch ev.Type {
+	case "error":
+		issue := Issue{
+			Type:    IssueError,
+			Message: ev.Msg,
+		}
+		if ev.Err != nil {
+			issue.Message = ev.Err.Message
+			issue.Context = ev.Err.Detail
+		}
+		// Parse file location from message
+		filePath, lineNum, col := parseIssueLocation(ev.Msg)
+		issue.FilePath = filePath
+		issue.Line = lineNum
+		issue.Column = col
+		m.issuesPanel.AddIssue(issue)
+
+	case "warning":
+		issue := Issue{
+			Type:    IssueWarning,
+			Message: ev.Msg,
+		}
+		filePath, lineNum, col := parseIssueLocation(ev.Msg)
+		issue.FilePath = filePath
+		issue.Line = lineNum
+		issue.Column = col
+		m.issuesPanel.AddIssue(issue)
+
+	case "log", "log_raw":
+		// Also parse from log lines for xcpretty/xcbeautify output
+		m.issuesPanel.AddFromLogLine(ev.Msg)
+	}
+
+	// Auto-show panel when errors exist
+	if m.issuesPanel.ErrorCount() > 0 && !m.showIssues {
+		m.showIssues = true
+		m.layout.ShowIssuesPanel = true
+		m.layout.IssuesPanelHeight = m.layout.CalculateIssuesPanelHeight(len(m.issuesPanel.Issues))
+		m.updateViewportSize()
+	}
 }
 
 func (m *Model) parseProgressFromEvent(ev core.Event) {
@@ -827,6 +986,16 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 
 	success := msg.err == nil
 
+	// Auto-hide issues panel on success with no errors
+	if success && m.issuesPanel.ErrorCount() == 0 {
+		m.showIssues = false
+		m.layout.ShowIssuesPanel = false
+		m.updateViewportSize()
+	}
+
+	// Track result duration for status bar
+	var duration time.Duration
+
 	if msg.build != nil {
 		m.lastBuild = *msg.build
 		m.lastResult = &Result{
@@ -835,9 +1004,7 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Duration:  msg.build.Duration,
 			Timestamp: time.Now(),
 		}
-		// Show summary card
-		durationStr := msg.build.Duration.Round(100 * time.Millisecond).String()
-		m.summaryCard.Show("Build", success, durationStr, "")
+		duration = msg.build.Duration
 	}
 	if msg.run != nil {
 		m.lastRun = *msg.run
@@ -847,8 +1014,6 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Message:   fmt.Sprintf("PID %d", msg.run.PID),
 			Timestamp: time.Now(),
 		}
-		// Show summary card
-		m.summaryCard.Show("Run", success, "", fmt.Sprintf("PID %d", msg.run.PID))
 	}
 	if msg.test != nil {
 		m.lastTest = *msg.test
@@ -858,10 +1023,22 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Duration:  msg.test.Duration,
 			Timestamp: time.Now(),
 		}
-		// Show summary card
-		durationStr := msg.test.Duration.Round(100 * time.Millisecond).String()
-		m.summaryCard.Show("Test", success, durationStr, "")
+		duration = msg.test.Duration
 	}
+
+	// Update status bar with last result
+	m.statusBar.HasLastResult = true
+	m.statusBar.LastResultSuccess = success
+	m.statusBar.LastResultOp = msg.cmd
+	if duration > 0 {
+		m.statusBar.LastResultTime = duration.Round(100 * time.Millisecond).String()
+	} else {
+		m.statusBar.LastResultTime = ""
+	}
+
+	// Append result line to logs
+	resultLine := m.formatResultLine(msg.cmd, success, duration)
+	m.appendLog(resultLine)
 
 	if msg.err != nil {
 		m.lastErr = msg.err.Error()
@@ -882,8 +1059,11 @@ func (m *Model) startOp(name string) tea.Cmd {
 	m.progressBar.Total = 0
 	m.layout.ShowProgressBar = true
 
-	// Hide summary card
-	m.summaryCard.Hide()
+	// Clear issues panel for new operation
+	m.issuesPanel.Clear()
+	m.showIssues = false
+	m.layout.ShowIssuesPanel = false
+	m.updateViewportSize()
 
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
@@ -1002,6 +1182,27 @@ func (m *Model) formatEventLine(ev core.Event) string {
 	return prefix + msg
 }
 
+func (m *Model) formatResultLine(op string, success bool, duration time.Duration) string {
+	icons := m.styles.Icons
+
+	icon := icons.Success
+	status := "success"
+	verb := "Succeeded"
+	if !success {
+		icon = icons.Error
+		status = "error"
+		verb = "Failed"
+	}
+
+	iconStyled := m.styles.StatusStyle(status).Render(icon)
+	text := strings.ToUpper(op[:1]) + op[1:] + " " + verb
+	if duration > 0 {
+		text += " · " + duration.Round(100*time.Millisecond).String()
+	}
+
+	return iconStyled + " " + text
+}
+
 // =============================================================================
 // View
 // =============================================================================
@@ -1054,14 +1255,23 @@ func (m Model) mainView() string {
 	// Build main content (logs)
 	contentArea := m.contentView()
 
-	// Build hints bar
-	hintsBarContent := m.hintsBar.View(m.width, m.styles)
+	// Build issues panel content (if has issues)
+	issuesPanelContent := ""
+	if m.showIssues && m.issuesPanel.HasIssues() {
+		m.issuesPanel.Width = m.width
+		m.issuesPanel.Height = m.layout.IssuesPanelHeight
+		issuesPanelContent = m.issuesPanel.View(m.styles)
+	}
+
+	// Build context-aware hints bar
+	hintsBarContent := m.hintsBar.ViewWithContext(m.width, m.styles, m.issuesFocused, m.issuesPanel.HasIssues())
 
 	// Use layout to render everything
 	return m.layout.RenderFullLayout(
 		statusBarContent,
 		progressBarContent,
 		contentArea,
+		issuesPanelContent,
 		hintsBarContent,
 		m.styles,
 	)
@@ -1069,17 +1279,8 @@ func (m Model) mainView() string {
 
 // contentView renders the main content area (logs)
 func (m Model) contentView() string {
-	s := m.styles
-
 	if len(m.logLines) == 0 {
 		return m.emptyStateView()
-	}
-
-	// Check if we should show summary card
-	if m.summaryCard.Visible {
-		card := m.summaryCard.View(s)
-		logs := m.viewport.View()
-		return lipgloss.JoinVertical(lipgloss.Left, card, "", logs)
 	}
 
 	return m.viewport.View()
@@ -1134,190 +1335,6 @@ func (m Model) emptyStateView() string {
 	)
 
 	return centered
-}
-
-func (m Model) headerView() string {
-	s := m.styles
-	isCompact := m.width < 100
-
-	// Brand
-	brand := s.Header.Brand.Render("xcbolt")
-
-	// Scheme selector
-	scheme := m.cfg.Scheme
-	if scheme == "" {
-		scheme = "No scheme"
-	}
-	schemeLabel := s.Header.Selector.Render(scheme + " " + s.Icons.ChevronDown)
-
-	// Destination selector (shortened in compact mode)
-	dest := "No destination"
-	if m.cfg.Destination.Name != "" {
-		dest = m.cfg.Destination.Name
-		// Only show OS version if we have room
-		if !isCompact && m.cfg.Destination.OS != "" {
-			dest += " (" + m.cfg.Destination.OS + ")"
-		}
-	} else if m.cfg.Destination.Kind != "" {
-		dest = string(m.cfg.Destination.Kind)
-	}
-	destLabel := s.Header.Selector.Render(dest + " " + s.Icons.ChevronDown)
-
-	// Status (right-aligned)
-	status := m.renderStatus()
-
-	// Calculate spacing
-	leftContent := lipgloss.JoinHorizontal(lipgloss.Center,
-		brand,
-		"   ",
-		schemeLabel,
-		"   ",
-		destLabel,
-	)
-	leftWidth := lipgloss.Width(leftContent)
-	statusWidth := lipgloss.Width(status)
-	spacer := strings.Repeat(" ", maxInt(1, m.width-leftWidth-statusWidth-4))
-
-	line := lipgloss.JoinHorizontal(lipgloss.Center,
-		leftContent,
-		spacer,
-		status,
-	)
-
-	return s.Header.Container.Width(m.width).Render(line)
-}
-
-func (m Model) renderStatus() string {
-	s := m.styles
-
-	if m.running {
-		icon := s.StatusStyle("running").Render(m.spinner.View())
-
-		// Build status label with stage and progress
-		var parts []string
-		parts = append(parts, strings.ToUpper(m.runningCmd))
-
-		if m.currentStage != "" {
-			parts = append(parts, m.currentStage)
-		}
-
-		if m.stageProgress != "" {
-			parts = append(parts, m.stageProgress)
-		}
-
-		label := strings.Join(parts, " ")
-		return icon + " " + s.Header.Status.Render(label)
-	}
-
-	icon := s.StatusStyle("idle").Render(s.Icons.Idle)
-	return icon + " " + s.Header.Status.Render("idle")
-}
-
-func (m Model) actionBarView() string {
-	s := m.styles
-
-	actions := []string{}
-	hints := m.keys.ActionHints()
-
-	// Compact mode: only show 3 primary actions if width < 100
-	if m.width < 100 && len(hints) > 3 {
-		hints = hints[:3]
-	}
-
-	for _, hint := range hints {
-		action := s.ActionBar.ActionKey.Render(hint.Key) + " " + s.ActionBar.ActionText.Render(hint.Name)
-		actions = append(actions, s.ActionBar.Action.Render(action))
-	}
-
-	line := lipgloss.JoinHorizontal(lipgloss.Left, actions...)
-	return s.ActionBar.Container.Width(m.width).Render(line)
-}
-
-func (m Model) logsView() string {
-	s := m.styles
-
-	if len(m.logLines) == 0 {
-		// Empty state - show welcome message with context
-		var lines []string
-
-		// Check if we have a valid configuration
-		isConfigured := m.cfg.Scheme != "" && (m.cfg.Workspace != "" || m.cfg.Project != "")
-
-		if isConfigured {
-			// Ready to work - minimal hint
-			lines = append(lines, s.Logs.EmptyState.Render("Ready to build"))
-			lines = append(lines, "")
-			lines = append(lines, s.ResultsBar.Hints.Render("r run  b build  t test"))
-		} else if m.info.Schemes != nil && len(m.info.Schemes) > 0 {
-			// Context loaded but not configured - prompt to configure
-			lines = append(lines, s.Logs.EmptyState.Render("Press i to configure"))
-			lines = append(lines, "")
-			lines = append(lines, s.ResultsBar.Hints.Render("s scheme  d destination  ? help"))
-		} else {
-			// Context loading or no project detected
-			lines = append(lines, s.Logs.EmptyState.Render("Loading project..."))
-		}
-
-		content := strings.Join(lines, "\n")
-		centered := lipgloss.Place(
-			m.viewport.Width,
-			m.viewport.Height,
-			lipgloss.Center,
-			lipgloss.Center,
-			content,
-		)
-		return s.Logs.Container.Width(m.width).Height(m.viewport.Height).Render(centered)
-	}
-
-	return s.Logs.Container.Width(m.width).Height(m.viewport.Height).Render(m.viewport.View())
-}
-
-func (m Model) resultsBarView() string {
-	s := m.styles
-
-	// Last result
-	resultText := "—"
-	if m.lastResult != nil {
-		status := "success"
-		if !m.lastResult.Success {
-			status = "error"
-		}
-		icon := s.StatusStyle(status).Render(s.StatusIcon(status))
-
-		resultText = icon + " " + m.lastResult.Operation
-		if m.lastResult.Duration > 0 {
-			resultText += " " + s.ResultsBar.Duration.Render(m.lastResult.Duration.Round(100*time.Millisecond).String())
-		}
-		if m.lastResult.Message != "" {
-			resultText += " " + s.ResultsBar.Duration.Render(m.lastResult.Message)
-		}
-	}
-
-	// Status message (in middle)
-	statusView := ""
-	if m.statusMsg != "" {
-		statusView = s.ResultsBar.Duration.Render("│ " + m.statusMsg)
-	}
-
-	// Keyboard hints (right-aligned)
-	hints := s.ResultsBar.Hints.Render(m.keys.FooterHints())
-
-	// Layout
-	resultWidth := lipgloss.Width(resultText)
-	hintsWidth := lipgloss.Width(hints)
-	statusWidth := lipgloss.Width(statusView)
-
-	spacer := strings.Repeat(" ", maxInt(1, m.width-resultWidth-hintsWidth-statusWidth-6))
-
-	line := lipgloss.JoinHorizontal(lipgloss.Center,
-		resultText,
-		"  ",
-		statusView,
-		spacer,
-		hints,
-	)
-
-	return s.ResultsBar.Container.Width(m.width).Render(line)
 }
 
 func (m Model) helpOverlayView() string {
@@ -1407,8 +1424,9 @@ func (m Model) helpOverlayView() string {
 
 func (m Model) wizardView() string {
 	s := m.styles
+	statusBarContent := m.statusBar.View(m.width, m.styles)
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.headerView(),
+		m.layout.RenderStatusBar(statusBarContent, m.styles),
 		s.Popup.Container.Width(m.width-4).Render(m.wizard.View()),
 	)
 }
@@ -1423,6 +1441,20 @@ func (m Model) paletteOverlayView() string {
 	// Render palette popup centered on screen
 	paletteContent := m.palette.View()
 	return RenderPaletteCentered(paletteContent, m.width, m.height)
+}
+
+// =============================================================================
+// Git Helpers
+// =============================================================================
+
+// getGitBranch returns the current git branch name, or empty string if not in a git repo
+func getGitBranch(projectRoot string) string {
+	cmd := exec.Command("git", "-C", projectRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // =============================================================================
