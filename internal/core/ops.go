@@ -73,7 +73,7 @@ func Build(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (B
 		StdoutLine: sink.HandleLine,
 		StderrLine: sink.HandleLine,
 	})
-	sink.Close()
+	sink.Finalize(err, res.ExitCode)
 
 	cfg.LastResultBundle = bundlePath
 	if err != nil {
@@ -123,7 +123,7 @@ func Test(ctx context.Context, projectRoot string, cfg Config, onlyTesting []str
 		StdoutLine: sink.HandleLine,
 		StderrLine: sink.HandleLine,
 	})
-	sink.Close()
+	sink.Finalize(err, res.ExitCode)
 
 	cfg.LastResultBundle = bundlePath
 
