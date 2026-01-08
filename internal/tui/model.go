@@ -123,11 +123,12 @@ type Model struct {
 	hintsBar    HintsBar
 
 	// Components
-	spinner  spinner.Model
-	viewport viewport.Model
-	wizard   wizardModel
-	selector SelectorModel
-	palette  PaletteModel
+	spinner      spinner.Model
+	viewport     viewport.Model
+	helpViewport viewport.Model // For scrollable help overlay
+	wizard       wizardModel
+	selector     SelectorModel
+	palette      PaletteModel
 
 	// Tab-based log view (replaces phaseView and streamView)
 	tabView *TabView
@@ -180,6 +181,9 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 	vp := viewport.New(0, 0)
 	vp.YPosition = 0
 
+	helpVp := viewport.New(0, 0)
+	helpVp.YPosition = 0
+
 	h := help.New()
 	h.ShowAll = false
 
@@ -199,15 +203,16 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 	si.Width = 40
 
 	return Model{
-		projectRoot: projectRoot,
-		configPath:  configPath,
-		cfgOverride: overrides,
-		styles:      DefaultStyles(),
-		keys:        defaultKeyMap(),
-		help:        h,
-		spinner:     sp,
-		viewport:    vp,
-		tabView:     NewTabView(),
+		projectRoot:  projectRoot,
+		configPath:   configPath,
+		cfgOverride:  overrides,
+		styles:       DefaultStyles(),
+		keys:         defaultKeyMap(),
+		help:         h,
+		spinner:      sp,
+		viewport:     vp,
+		helpViewport: helpVp,
+		tabView:      NewTabView(),
 		phaseView:   NewPhaseView(),
 		streamView:  NewStreamView(),
 		searchInput: si,
@@ -552,6 +557,7 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 	// Navigation
 	case "help":
 		m.mode = ModeHelp
+		m.setupHelpViewport()
 	case "quit":
 		return tea.Quit
 	}
@@ -568,6 +574,64 @@ func (m *Model) updateViewportSize() {
 	// Update legacy views
 	m.phaseView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
 	m.streamView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
+}
+
+func (m *Model) setupHelpViewport() {
+	s := m.styles
+
+	// Calculate width: 50-60% of screen, clamped
+	width := m.width * 55 / 100
+	if width < 50 {
+		width = 50
+	}
+	if width > 80 {
+		width = 80
+	}
+
+	// Calculate max height for content (leave room for border, padding, title, footer)
+	maxHeight := m.height - 10
+	if maxHeight < 10 {
+		maxHeight = 10
+	}
+
+	var b strings.Builder
+
+	groups := m.keys.FullHelp()
+	groupNames := []string{"ACTIONS", "CONFIGURATION", "TABS", "VIEW", "SCROLLING", "NAVIGATION"}
+
+	sectionStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextSubtle).
+		Bold(true)
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Accent).
+		Width(12)
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Text)
+
+	for i, group := range groups {
+		if i < len(groupNames) {
+			b.WriteString(sectionStyle.Render("  " + groupNames[i]))
+			b.WriteString("\n")
+		}
+		for _, binding := range group {
+			keys := binding.Help().Key
+			desc := binding.Help().Desc
+			keyPart := keyStyle.Render("  " + keys)
+			descPart := descStyle.Render(desc)
+			b.WriteString(keyPart + descPart + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	content := b.String()
+
+	// Set up viewport
+	m.helpViewport.Width = width - 6 // Account for border and padding
+	m.helpViewport.Height = maxHeight
+	m.helpViewport.SetContent(content)
+	m.helpViewport.GotoTop()
 }
 
 func (m *Model) applyTUIConfig() {
@@ -654,10 +718,34 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		return cmd
 	}
 
-	// Help mode - any key closes
+	// Help mode - handle scrolling or close
 	if m.mode == ModeHelp {
-		m.mode = ModeNormal
-		return nil
+		switch msg.String() {
+		case "esc", "?", "q":
+			m.mode = ModeNormal
+			return nil
+		case "up", "k":
+			m.helpViewport.LineUp(1)
+			return nil
+		case "down", "j":
+			m.helpViewport.LineDown(1)
+			return nil
+		case "pgup", "ctrl+u":
+			m.helpViewport.HalfViewUp()
+			return nil
+		case "pgdown", "ctrl+d":
+			m.helpViewport.HalfViewDown()
+			return nil
+		case "home", "g":
+			m.helpViewport.GotoTop()
+			return nil
+		case "end", "G":
+			m.helpViewport.GotoBottom()
+			return nil
+		default:
+			// Ignore other keys
+			return nil
+		}
 	}
 
 	// Selector mode
@@ -717,6 +805,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.Help):
 		m.mode = ModeHelp
+		m.setupHelpViewport()
 
 	case keyMatches(msg, m.keys.Cancel):
 		if m.running && m.cancelFn != nil {
@@ -1860,7 +1949,7 @@ func (m Model) emptyStateView() string {
 func (m Model) helpOverlayView() string {
 	s := m.styles
 
-	// Calculate width: 50-60% of screen, clamped
+	// Calculate width (same as setupHelpViewport)
 	width := m.width * 55 / 100
 	if width < 50 {
 		width = 50
@@ -1879,47 +1968,30 @@ func (m Model) helpOverlayView() string {
 	b.WriteString("\n")
 
 	dividerStyle := lipgloss.NewStyle().Foreground(s.Colors.BorderMuted)
-	b.WriteString(dividerStyle.Render(strings.Repeat("─", width-4)))
-	b.WriteString("\n\n")
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", width-6)))
+	b.WriteString("\n")
 
-	groups := m.keys.FullHelp()
-	groupNames := []string{"ACTIONS", "CONFIGURATION", "TABS", "VIEW", "SCROLLING", "NAVIGATION"}
+	// Scrollable content from viewport
+	b.WriteString(m.helpViewport.View())
 
-	sectionStyle := lipgloss.NewStyle().
-		Foreground(s.Colors.TextSubtle).
-		Bold(true)
-
-	keyStyle := lipgloss.NewStyle().
-		Foreground(s.Colors.Accent).
-		Width(12)
-
-	descStyle := lipgloss.NewStyle().
-		Foreground(s.Colors.Text)
-
-	for i, group := range groups {
-		if i < len(groupNames) {
-			b.WriteString(sectionStyle.Render("  " + groupNames[i]))
-			b.WriteString("\n")
-		}
-		for _, binding := range group {
-			keys := binding.Help().Key
-			desc := binding.Help().Desc
-			// Format: key (padded) description
-			keyPart := keyStyle.Render("  " + keys)
-			descPart := descStyle.Render(desc)
-			b.WriteString(keyPart + descPart + "\n")
-		}
-		b.WriteString("\n")
+	// Scroll indicator
+	scrollInfo := ""
+	if m.helpViewport.TotalLineCount() > m.helpViewport.Height {
+		percent := int(m.helpViewport.ScrollPercent() * 100)
+		scrollStyle := lipgloss.NewStyle().Foreground(s.Colors.TextSubtle)
+		scrollInfo = scrollStyle.Render(fmt.Sprintf(" (%d%%)", percent))
 	}
 
 	// Footer
-	b.WriteString(dividerStyle.Render(strings.Repeat("─", width-4)))
+	b.WriteString("\n")
+	b.WriteString(dividerStyle.Render(strings.Repeat("─", width-6)))
 	b.WriteString("\n")
 
 	hintKeyStyle := lipgloss.NewStyle().Foreground(s.Colors.Accent)
 	hintDescStyle := lipgloss.NewStyle().Foreground(s.Colors.TextSubtle)
 	hints := "Press " + hintKeyStyle.Render("?") + hintDescStyle.Render(" or ") +
-		hintKeyStyle.Render("esc") + hintDescStyle.Render(" to close")
+		hintKeyStyle.Render("esc") + hintDescStyle.Render(" to close") +
+		hintDescStyle.Render("  ↑↓ scroll") + scrollInfo
 	b.WriteString(hints)
 
 	// Container with border
