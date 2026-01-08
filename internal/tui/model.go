@@ -1252,6 +1252,7 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 
 	// Track result duration for status bar
 	var duration time.Duration
+	var durationStr string
 
 	if msg.build != nil {
 		m.lastBuild = *msg.build
@@ -1262,6 +1263,7 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Timestamp: time.Now(),
 		}
 		duration = msg.build.Duration
+		durationStr = duration.Round(100 * time.Millisecond).String()
 	}
 	if msg.run != nil {
 		m.lastRun = *msg.run
@@ -1281,7 +1283,11 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Timestamp: time.Now(),
 		}
 		duration = msg.test.Duration
+		durationStr = duration.Round(100 * time.Millisecond).String()
 	}
+
+	// Update TabView summary with build results
+	m.tabView.SetBuildResult(success, durationStr, nil)
 
 	// Update status bar with last result
 	m.statusBar.HasLastResult = true
@@ -1650,10 +1656,7 @@ func (m Model) searchBarView() string {
 
 // contentView renders the main content area (logs)
 func (m Model) contentView() string {
-	// Use new TabView system
-	if m.tabView.Counts.StreamLines == 0 {
-		return m.emptyStateView()
-	}
+	// Always render TabView - it handles empty state internally
 	return m.tabView.View(m.styles)
 }
 

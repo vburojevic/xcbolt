@@ -239,7 +239,6 @@ func (it *IssuesTab) View(styles Styles) string {
 func (it *IssuesTab) renderHeader(styles Styles) string {
 	errorCount := it.countByType(IssueTypeError)
 	warnCount := it.countByType(IssueTypeWarning)
-	noteCount := it.countByType(IssueTypeNote)
 
 	icons := styles.Icons
 
@@ -253,11 +252,6 @@ func (it *IssuesTab) renderHeader(styles Styles) string {
 	if warnCount > 0 {
 		warnStyle := lipgloss.NewStyle().Foreground(styles.Colors.Warning)
 		parts = append(parts, warnStyle.Render(fmt.Sprintf("%s %d warnings", icons.Warning, warnCount)))
-	}
-
-	if noteCount > 0 {
-		noteStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
-		parts = append(parts, noteStyle.Render(fmt.Sprintf("%s %d notes", icons.Note, noteCount)))
 	}
 
 	if len(parts) == 0 {

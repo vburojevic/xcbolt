@@ -69,7 +69,7 @@ func (s StatusBar) ViewWithMinimal(width int, styles Styles, minimal bool) strin
 		return s.renderMinimalView(width, styles, icons)
 	}
 
-	// === LEFT SECTION: Project + Branch ===
+	// === LEFT SECTION: Project + Brand ===
 	leftContent := s.renderLeftSection(styles, icons)
 
 	// === CENTER SECTION: Scheme + Destination ===
@@ -87,6 +87,7 @@ func (s StatusBar) ViewWithMinimal(width int, styles Styles, minimal bool) strin
 	totalContentWidth := leftWidth + centerWidth + rightWidth
 	availableSpace := width - totalContentWidth - 4 // padding
 
+	var content string
 	if availableSpace > 0 {
 		// Distribute space evenly on both sides of center
 		leftSpace := availableSpace / 2
@@ -95,13 +96,21 @@ func (s StatusBar) ViewWithMinimal(width int, styles Styles, minimal bool) strin
 		leftSpacer := strings.Repeat(" ", maxInt(1, leftSpace))
 		rightSpacer := strings.Repeat(" ", maxInt(1, rightSpace))
 
-		return lipgloss.JoinHorizontal(lipgloss.Center,
+		content = lipgloss.JoinHorizontal(lipgloss.Center,
 			leftContent, leftSpacer, centerContent, rightSpacer, rightContent)
+	} else {
+		// Not enough space - just join with minimal spacing
+		content = lipgloss.JoinHorizontal(lipgloss.Center,
+			leftContent, " ", centerContent, " ", rightContent)
 	}
 
-	// Not enough space - just join with minimal spacing
-	return lipgloss.JoinHorizontal(lipgloss.Center,
-		leftContent, " ", centerContent, " ", rightContent)
+	// Ensure we always return something visible
+	if strings.TrimSpace(content) == "" {
+		brandStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.Colors.Accent)
+		content = brandStyle.Render("xcbolt")
+	}
+
+	return content
 }
 
 // renderMinimalView renders compact single-line status: xcbolt | Scheme | Device | Status
@@ -371,10 +380,8 @@ func DefaultHints() []HintItem {
 		{Key: "t", Desc: "test"},
 		{Key: "s", Desc: "scheme"},
 		{Key: "d", Desc: "dest"},
-		{Key: "v", Desc: "stream"},
-		{Key: "F", Desc: "errors"},
-		{Key: "n", Desc: "next err"},
-		{Key: "^K", Desc: "palette"},
+		{Key: "1-3", Desc: "tabs"},
+		{Key: "/", Desc: "search"},
 		{Key: "?", Desc: "help"},
 	}
 }

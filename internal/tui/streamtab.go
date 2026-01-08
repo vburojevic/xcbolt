@@ -41,6 +41,7 @@ type StreamTab struct {
 
 	// Regex patterns for syntax highlighting
 	filePathRegex *regexp.Regexp
+	urlRegex      *regexp.Regexp
 	errorRegex    *regexp.Regexp
 	warningRegex  *regexp.Regexp
 }
@@ -52,10 +53,13 @@ func NewStreamTab() *StreamTab {
 		AutoFollow:      true,
 		ShowLineNumbers: true,
 		ShowTimestamps:  false,
-		PathStyle:       "short",
-		filePathRegex:   regexp.MustCompile(`(/[^\s:]+\.(swift|m|mm|h|c|cpp|xib|storyboard))(?::(\d+))?`),
-		errorRegex:      regexp.MustCompile(`(?i)(error:|fatal error|failed)`),
-		warningRegex:    regexp.MustCompile(`(?i)(warning:)`),
+		PathStyle:       "full", // Don't shorten paths - show full for clarity
+		// Match file paths: /path/to/file.ext or /path/to/dir (with optional :line:col)
+		filePathRegex: regexp.MustCompile(`(/[^\s:]+(?:\.[a-zA-Z0-9]+)?)(?::(\d+)(?::(\d+))?)?`),
+		// Match URLs: https://... or http://...
+		urlRegex:     regexp.MustCompile(`https?://[^\s]+`),
+		errorRegex:   regexp.MustCompile(`(?i)(error:|fatal error|failed)`),
+		warningRegex: regexp.MustCompile(`(?i)(warning:)`),
 	}
 }
 
@@ -273,34 +277,57 @@ func (st *StreamTab) highlightLine(line StreamLine, maxWidth int, styles Styles)
 	return style.Render(text)
 }
 
-// highlightFilePaths highlights file paths in a line
+// highlightFilePaths highlights file paths and URLs in a line
 func (st *StreamTab) highlightFilePaths(text string, syntax SyntaxColors) string {
-	matches := st.filePathRegex.FindAllStringSubmatchIndex(text, -1)
-	if len(matches) == 0 {
+	pathStyle := lipgloss.NewStyle().Foreground(syntax.FilePath)
+
+	// Collect all matches with their positions
+	type match struct {
+		start, end int
+		text       string
+	}
+	var allMatches []match
+
+	// Find URL matches first (they take priority)
+	urlMatches := st.urlRegex.FindAllStringIndex(text, -1)
+	for _, m := range urlMatches {
+		allMatches = append(allMatches, match{start: m[0], end: m[1], text: text[m[0]:m[1]]})
+	}
+
+	// Find file path matches
+	pathMatches := st.filePathRegex.FindAllStringIndex(text, -1)
+	for _, m := range pathMatches {
+		// Skip if this overlaps with a URL match
+		overlaps := false
+		for _, um := range allMatches {
+			if m[0] < um.end && m[1] > um.start {
+				overlaps = true
+				break
+			}
+		}
+		if !overlaps {
+			allMatches = append(allMatches, match{start: m[0], end: m[1], text: text[m[0]:m[1]]})
+		}
+	}
+
+	if len(allMatches) == 0 {
 		return text
 	}
 
-	pathStyle := lipgloss.NewStyle().Foreground(syntax.FilePath)
-	result := text
-
-	// Process matches in reverse to preserve indices
-	for i := len(matches) - 1; i >= 0; i-- {
-		match := matches[i]
-		if len(match) >= 2 {
-			start, end := match[0], match[1]
-			path := text[start:end]
-
-			// Shorten path if needed
-			if st.PathStyle == "short" {
-				path = st.shortenPath(path)
-			} else if st.PathStyle == "filename" {
-				parts := strings.Split(path, "/")
-				path = parts[len(parts)-1]
+	// Sort matches by start position (descending) to process from end
+	for i := 0; i < len(allMatches)-1; i++ {
+		for j := i + 1; j < len(allMatches); j++ {
+			if allMatches[i].start < allMatches[j].start {
+				allMatches[i], allMatches[j] = allMatches[j], allMatches[i]
 			}
-
-			highlighted := pathStyle.Render(path)
-			result = result[:start] + highlighted + result[end:]
 		}
+	}
+
+	// Apply highlighting in reverse order to preserve indices
+	result := text
+	for _, m := range allMatches {
+		highlighted := pathStyle.Render(m.text)
+		result = result[:m.start] + highlighted + result[m.end:]
 	}
 
 	return result

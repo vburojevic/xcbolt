@@ -43,12 +43,11 @@ type TabCounts struct {
 	StreamLines  int // Total lines in stream
 	ErrorCount   int // Number of errors
 	WarningCount int // Number of warnings
-	NoteCount    int // Number of notes
 }
 
-// IssueTotal returns total issues (errors + warnings + notes)
+// IssueTotal returns total issues (errors + warnings)
 func (c TabCounts) IssueTotal() int {
-	return c.ErrorCount + c.WarningCount + c.NoteCount
+	return c.ErrorCount + c.WarningCount
 }
 
 // =============================================================================
@@ -133,7 +132,7 @@ func (tv *TabView) AddLine(line string, lineType TabLineType) {
 	tv.StreamTab.AddLine(line, lineType)
 	tv.Counts.StreamLines++
 
-	// Route to issues tab if it's an error/warning/note
+	// Route to issues tab if it's an error/warning (notes stay in stream only)
 	switch lineType {
 	case TabLineTypeError:
 		tv.IssuesTab.AddIssue(IssueTypeError, line)
@@ -141,9 +140,6 @@ func (tv *TabView) AddLine(line string, lineType TabLineType) {
 	case TabLineTypeWarning:
 		tv.IssuesTab.AddIssue(IssueTypeWarning, line)
 		tv.Counts.WarningCount++
-	case TabLineTypeNote:
-		tv.IssuesTab.AddIssue(IssueTypeNote, line)
-		tv.Counts.NoteCount++
 	}
 }
 
@@ -258,8 +254,9 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 		},
 	}
 
-	// Calculate tab width - distribute evenly
-	tabWidth := tv.Width / 3
+	// Calculate tab width - distribute evenly (account for container padding)
+	availableWidth := tv.Width - 2 // Container has 1 char padding on each side
+	tabWidth := availableWidth / 3
 	if tabWidth < 15 {
 		tabWidth = 15
 	}
@@ -270,15 +267,13 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 	for i, t := range tabs {
 		isActive := tv.ActiveTab == t.tab
 
-		// Style based on active state
-		var tabStyle, iconStyle, labelStyle, subtitleStyle lipgloss.Style
+		// Style based on active state - use same base style for consistency
+		var iconStyle, labelStyle, subtitleStyle lipgloss.Style
 		if isActive {
-			tabStyle = s.TabActive
 			iconStyle = lipgloss.NewStyle().Foreground(styles.Colors.Accent)
 			labelStyle = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true)
 			subtitleStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 		} else {
-			tabStyle = s.TabInactive
 			iconStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
 			labelStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 			subtitleStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
@@ -301,9 +296,10 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 		// Line 2: subtitle (indented to align with label)
 		line2Content := "    " + subtitleStyle.Render(t.subtitle)
 
-		// Apply tab container style with fixed width
-		line1Styled := tabStyle.Width(tabWidth).Render(line1Content)
-		line2Styled := tabStyle.Width(tabWidth).Render(line2Content)
+		// Use a simple fixed-width style without extra padding
+		fixedStyle := lipgloss.NewStyle().Width(tabWidth)
+		line1Styled := fixedStyle.Render(line1Content)
+		line2Styled := fixedStyle.Render(line2Content)
 
 		line1Parts = append(line1Parts, line1Styled)
 		line2Parts = append(line2Parts, line2Styled)
