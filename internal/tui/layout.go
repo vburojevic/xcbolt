@@ -105,22 +105,24 @@ func (l Layout) SplitBottomHeight() int {
 func (l Layout) RenderStatusBar(content string, styles Styles) string {
 	if l.MinimalMode {
 		// Minimal mode: single line, no border
-		minimal := lipgloss.NewStyle().
-			Padding(0, 1).
-			Height(1) // Force minimum height
-		if l.Width > 0 {
-			minimal = minimal.Width(l.Width)
-		}
-		return minimal.Render(content)
+		style := lipgloss.NewStyle().
+			Width(l.Width).
+			Height(1).
+			Padding(0, 1)
+		return style.Render(content)
 	}
 
-	// Force explicit height to ensure status bar always renders
-	barStyle := styles.StatusBar.Container.
-		Height(l.StatusBarHeight) // Force height (2 lines: content + border)
-	if l.Width > 0 {
-		barStyle = barStyle.Width(l.Width)
-	}
-	return barStyle.Render(content)
+	// Create style fresh (like RenderHintsBar) to ensure consistent rendering
+	style := lipgloss.NewStyle().
+		Width(l.Width).
+		Height(l.StatusBarHeight).
+		Padding(0, 1).
+		Background(styles.Colors.Surface).
+		BorderStyle(lipgloss.Border{Bottom: "─"}).
+		BorderForeground(styles.Colors.Border).
+		BorderBottom(true)
+
+	return style.Render(content)
 }
 
 // RenderProgressBar renders the progress bar below status bar
