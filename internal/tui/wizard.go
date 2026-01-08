@@ -67,10 +67,10 @@ func newWizard(info core.ContextInfo, cfg core.Config, width int) wizardModel {
 		schemeOpts = append(schemeOpts, huh.NewOption("(No schemes detected)", ""))
 	}
 
-	confOpts := []huh.Option[string]{
-		huh.NewOption("Debug", "Debug"),
-		huh.NewOption("Release", "Release"),
-		// Let users type a custom config later if needed.
+	confList := normalizeConfigurations(info.Configurations, w.configuration)
+	confOpts := make([]huh.Option[string], 0, len(confList))
+	for _, c := range confList {
+		confOpts = append(confOpts, huh.NewOption(c, c))
 	}
 
 	kindOpts := []huh.Option[string]{

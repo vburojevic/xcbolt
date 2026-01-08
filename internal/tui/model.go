@@ -213,12 +213,12 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		viewport:     vp,
 		helpViewport: helpVp,
 		tabView:      NewTabView(),
-		phaseView:   NewPhaseView(),
-		streamView:  NewStreamView(),
-		searchInput: si,
-		mode:        ModeNormal,
-		logViewMode: LogViewCards,
-		state:       state,
+		phaseView:    NewPhaseView(),
+		streamView:   NewStreamView(),
+		searchInput:  si,
+		mode:         ModeNormal,
+		logViewMode:  LogViewCards,
+		state:        state,
 		// Layout components
 		layout:      layout,
 		statusBar:   statusBar,
@@ -410,6 +410,18 @@ func (m *Model) openSchemeSelector() {
 	m.mode = ModeSelector
 }
 
+func (m *Model) openConfigurationSelector() {
+	items := ConfigurationItems(m.info.Configurations, m.cfg.Configuration)
+	if len(items) == 0 {
+		m.setStatus("No configurations found")
+		return
+	}
+
+	m.selector = NewSelector("Select Configuration", items, m.width, m.styles)
+	m.selectorType = SelectorConfiguration
+	m.mode = ModeSelector
+}
+
 func (m *Model) openDestinationSelector() {
 	// Convert core types to selector types
 	sims := make([]SimulatorInfo, len(m.info.Simulators))
@@ -453,6 +465,13 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 		m.cfg.Scheme = item.ID
 		m.setStatus("Scheme: " + item.Title)
 		// Save config
+		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+			m.lastErr = err.Error()
+		}
+
+	case SelectorConfiguration:
+		m.cfg.Configuration = item.ID
+		m.setStatus("Configuration: " + item.Title)
 		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
 			m.lastErr = err.Error()
 		}
@@ -536,6 +555,8 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 	// Configuration
 	case "scheme":
 		m.openSchemeSelector()
+	case "configuration":
+		m.openConfigurationSelector()
 	case "destination":
 		m.openDestinationSelector()
 	case "init":
@@ -669,6 +690,7 @@ func (m *Model) syncStatusBarState() {
 
 	m.statusBar.GitBranch = m.gitBranch
 	m.statusBar.Scheme = m.cfg.Scheme
+	m.statusBar.Configuration = m.cfg.Configuration
 	m.statusBar.Destination = m.cfg.Destination.Name
 	m.statusBar.DestOS = m.cfg.Destination.OS
 	m.statusBar.Running = m.running
@@ -835,6 +857,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.Scheme):
 		m.openSchemeSelector()
+
+	case keyMatches(msg, m.keys.Configuration):
+		m.openConfigurationSelector()
 
 	case keyMatches(msg, m.keys.Destination):
 		m.openDestinationSelector()
@@ -1175,7 +1200,11 @@ func (m *Model) tryAutoDetect() bool {
 
 	// Auto-select configuration
 	if m.cfg.Configuration == "" {
-		m.cfg.Configuration = "Debug"
+		if len(m.info.Configurations) > 0 {
+			m.cfg.Configuration = m.info.Configurations[0]
+		} else {
+			m.cfg.Configuration = "Debug"
+		}
 	}
 
 	// Auto-select destination: prefer first booted simulator

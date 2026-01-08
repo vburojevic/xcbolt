@@ -11,8 +11,9 @@ import (
 )
 
 type XcodeListInfo struct {
-	Schemes []string `json:"schemes"`
-	Name    string   `json:"name"`
+	Schemes        []string `json:"schemes"`
+	Configurations []string `json:"configurations"`
+	Name           string   `json:"name"`
 }
 
 type xcodebuildListJSON struct {
@@ -20,15 +21,15 @@ type xcodebuildListJSON struct {
 	Workspace *XcodeListInfo `json:"workspace,omitempty"`
 }
 
-// XcodebuildList returns schemes for a workspace or project using `xcodebuild -list -json`.
-func XcodebuildList(ctx context.Context, projectRoot string, cfg Config, emit Emitter) ([]string, error) {
+// XcodebuildList returns schemes/configurations for a workspace or project using `xcodebuild -list -json`.
+func XcodebuildList(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (XcodeListInfo, error) {
 	args := []string{"xcodebuild", "-list", "-json"}
 	if cfg.Workspace != "" {
 		args = append(args, "-workspace", filepath.Join(projectRoot, cfg.Workspace))
 	} else if cfg.Project != "" {
 		args = append(args, "-project", filepath.Join(projectRoot, cfg.Project))
 	} else {
-		return nil, errors.New("no workspace/project configured")
+		return XcodeListInfo{}, errors.New("no workspace/project configured")
 	}
 
 	var out strings.Builder
@@ -48,7 +49,7 @@ func XcodebuildList(ctx context.Context, projectRoot string, cfg Config, emit Em
 	})
 	_ = res
 	if err != nil {
-		return nil, err
+		return XcodeListInfo{}, err
 	}
 	b := []byte(out.String())
 	var parsed xcodebuildListJSON
@@ -56,19 +57,29 @@ func XcodebuildList(ctx context.Context, projectRoot string, cfg Config, emit Em
 		// Some Xcode versions may emit extra prefixes; attempt to extract JSON object.
 		trim := extractJSONObject(out.String())
 		if trim == "" {
-			return nil, fmt.Errorf("failed to parse xcodebuild -list -json output: %w", err)
+			return XcodeListInfo{}, fmt.Errorf("failed to parse xcodebuild -list -json output: %w", err)
 		}
 		if err := json.Unmarshal([]byte(trim), &parsed); err != nil {
-			return nil, fmt.Errorf("failed to parse xcodebuild -list -json output: %w", err)
+			return XcodeListInfo{}, fmt.Errorf("failed to parse xcodebuild -list -json output: %w", err)
 		}
 	}
-	if parsed.Workspace != nil && len(parsed.Workspace.Schemes) > 0 {
-		return parsed.Workspace.Schemes, nil
+
+	var info XcodeListInfo
+	if parsed.Workspace != nil {
+		info = *parsed.Workspace
 	}
 	if parsed.Project != nil {
-		return parsed.Project.Schemes, nil
+		if info.Name == "" {
+			info.Name = parsed.Project.Name
+		}
+		if len(info.Schemes) == 0 {
+			info.Schemes = parsed.Project.Schemes
+		}
+		if len(info.Configurations) == 0 {
+			info.Configurations = parsed.Project.Configurations
+		}
 	}
-	return []string{}, nil
+	return info, nil
 }
 
 var jsonObjectRE = regexp.MustCompile(`(?s)\{.*\}`)

@@ -104,6 +104,7 @@ func DefaultCommands() []Command {
 
 		// Configuration
 		{ID: "scheme", Name: "Switch Scheme", Description: "Change the active scheme", Shortcut: "s", Category: "Config"},
+		{ID: "configuration", Name: "Switch Configuration", Description: "Change the active build configuration", Shortcut: "C", Category: "Config"},
 		{ID: "destination", Name: "Switch Destination", Description: "Change the target device/simulator", Shortcut: "d", Category: "Config"},
 		{ID: "init", Name: "Initialize Config", Description: "Run the configuration wizard", Shortcut: "i", Category: "Config"},
 		{ID: "refresh", Name: "Refresh Context", Description: "Rescan projects, schemes, and devices", Shortcut: "^R", Category: "Config"},

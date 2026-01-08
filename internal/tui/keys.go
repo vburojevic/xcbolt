@@ -21,6 +21,7 @@ type SelectorType int
 
 const (
 	SelectorScheme SelectorType = iota
+	SelectorConfiguration
 	SelectorDestination
 )
 
@@ -39,9 +40,10 @@ type keyMap struct {
 	Stop  key.Binding
 
 	// Selectors
-	Scheme      key.Binding
-	Destination key.Binding
-	Palette     key.Binding
+	Scheme        key.Binding
+	Configuration key.Binding
+	Destination   key.Binding
+	Palette       key.Binding
 
 	// Configuration
 	Init    key.Binding
@@ -137,6 +139,10 @@ func defaultKeyMap() keyMap {
 		Scheme: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "scheme"),
+		),
+		Configuration: key.NewBinding(
+			key.WithKeys("C"),
+			key.WithHelp("C", "config"),
 		),
 		Destination: key.NewBinding(
 			key.WithKeys("d"),
@@ -300,7 +306,7 @@ func defaultKeyMap() keyMap {
 
 // ShortHelp returns bindings shown in compact help
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Run, k.Build, k.Test, k.Scheme, k.Destination, k.Help, k.Quit}
+	return []key.Binding{k.Run, k.Build, k.Test, k.Scheme, k.Configuration, k.Destination, k.Help, k.Quit}
 }
 
 // FullHelp returns all bindings grouped for full help view
@@ -309,7 +315,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		// Actions
 		{k.Build, k.Run, k.Test, k.Clean, k.Stop},
 		// Configuration
-		{k.Scheme, k.Destination, k.Palette, k.Init, k.Refresh},
+		{k.Scheme, k.Configuration, k.Destination, k.Palette, k.Init, k.Refresh},
 		// Tabs
 		{k.Tab1, k.Tab2, k.Tab3, k.TabNext},
 		// View controls

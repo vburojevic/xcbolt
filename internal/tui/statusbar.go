@@ -15,11 +15,12 @@ import (
 // StatusBar renders the top status bar
 type StatusBar struct {
 	// Project info
-	ProjectName string
-	GitBranch   string
-	Scheme      string
-	Destination string
-	DestOS      string
+	ProjectName   string
+	GitBranch     string
+	Scheme        string
+	Configuration string
+	Destination   string
+	DestOS        string
 
 	// Running state
 	Running    bool
@@ -126,6 +127,9 @@ func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) stri
 	if scheme == "" {
 		scheme = "?"
 	}
+	if s.Configuration != "" {
+		scheme = scheme + ":" + s.Configuration
+	}
 	if len(scheme) > 15 {
 		scheme = scheme[:12] + "..."
 	}
@@ -211,6 +215,12 @@ func (s StatusBar) renderCenterSection(styles Styles) string {
 		schemeStyle = lipgloss.NewStyle().Foreground(styles.Colors.Text)
 	}
 	parts = append(parts, schemeStyle.Render(schemeText))
+
+	// Configuration
+	if s.Configuration != "" {
+		confStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		parts = append(parts, sep, confStyle.Render(s.Configuration))
+	}
 
 	// Destination
 	destText := "No destination"

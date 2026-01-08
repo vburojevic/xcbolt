@@ -8,12 +8,13 @@ import (
 )
 
 type ContextInfo struct {
-	ProjectRoot string      `json:"projectRoot"`
-	Workspaces  []string    `json:"workspaces"`
-	Projects    []string    `json:"projects"`
-	Schemes     []string    `json:"schemes"`
-	Simulators  []Simulator `json:"simulators"`
-	Devices     []Device    `json:"devices"`
+	ProjectRoot    string      `json:"projectRoot"`
+	Workspaces     []string    `json:"workspaces"`
+	Projects       []string    `json:"projects"`
+	Schemes        []string    `json:"schemes"`
+	Configurations []string    `json:"configurations"`
+	Simulators     []Simulator `json:"simulators"`
+	Devices        []Device    `json:"devices"`
 }
 
 func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (ContextInfo, Config, error) {
@@ -41,16 +42,34 @@ func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit E
 		cfg.Project = projects[0]
 	}
 
-	// Schemes via xcodebuild -list -json
+	// Schemes/configurations via xcodebuild -list -json
 	schemes := []string{}
+	configurations := []string{}
 	if cfg.Workspace != "" || cfg.Project != "" {
-		if sc, err := XcodebuildList(ctx, projectRoot, cfg, emit); err == nil {
-			schemes = sc
-			if cfg.Scheme == "" && len(sc) == 1 {
-				cfg.Scheme = sc[0]
+		if list, err := XcodebuildList(ctx, projectRoot, cfg, emit); err == nil {
+			schemes = list.Schemes
+			configurations = list.Configurations
+			if cfg.Scheme == "" && len(list.Schemes) == 1 {
+				cfg.Scheme = list.Schemes[0]
+			}
+			if cfg.Configuration == "" && len(list.Configurations) == 1 {
+				cfg.Configuration = list.Configurations[0]
 			}
 		} else {
-			emitMaybe(emit, Warn("context", "Could not list schemes: "+err.Error()))
+			emitMaybe(emit, Warn("context", "Could not list schemes/configurations: "+err.Error()))
+		}
+	}
+
+	// If workspace was chosen but configs weren't found, try a single project as fallback.
+	if len(configurations) == 0 && cfg.Workspace != "" && cfg.Project == "" && len(projects) == 1 {
+		tmpCfg := cfg
+		tmpCfg.Workspace = ""
+		tmpCfg.Project = projects[0]
+		if list, err := XcodebuildList(ctx, projectRoot, tmpCfg, emit); err == nil {
+			configurations = list.Configurations
+			if cfg.Configuration == "" && len(list.Configurations) == 1 {
+				cfg.Configuration = list.Configurations[0]
+			}
 		}
 	}
 
@@ -73,12 +92,13 @@ func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit E
 	}
 
 	info := ContextInfo{
-		ProjectRoot: projectRoot,
-		Workspaces:  workspaces,
-		Projects:    projects,
-		Schemes:     schemes,
-		Simulators:  simulators,
-		Devices:     devices,
+		ProjectRoot:    projectRoot,
+		Workspaces:     workspaces,
+		Projects:       projects,
+		Schemes:        schemes,
+		Configurations: configurations,
+		Simulators:     simulators,
+		Devices:        devices,
 	}
 	return info, cfg, nil
 }

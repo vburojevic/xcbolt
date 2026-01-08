@@ -413,6 +413,33 @@ func (m SelectorModel) renderItem(item SelectorItem, isSelected bool, icons Icon
 // Helper to create selector items from context
 // =============================================================================
 
+func normalizeConfigurations(configs []string, current string) []string {
+	out := make([]string, 0, len(configs)+1)
+	seen := make(map[string]struct{}, len(configs)+1)
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	if len(configs) == 0 {
+		add("Debug")
+		add("Release")
+	} else {
+		for _, c := range configs {
+			add(c)
+		}
+	}
+	add(current)
+	return out
+}
+
 // SchemeItems creates selector items from schemes
 func SchemeItems(schemes []string) []SelectorItem {
 	items := make([]SelectorItem, len(schemes))
@@ -420,6 +447,19 @@ func SchemeItems(schemes []string) []SelectorItem {
 		items[i] = SelectorItem{
 			ID:    s,
 			Title: s,
+		}
+	}
+	return items
+}
+
+// ConfigurationItems creates selector items from build configurations.
+func ConfigurationItems(configs []string, current string) []SelectorItem {
+	list := normalizeConfigurations(configs, current)
+	items := make([]SelectorItem, len(list))
+	for i, c := range list {
+		items[i] = SelectorItem{
+			ID:    c,
+			Title: c,
 		}
 	}
 	return items
