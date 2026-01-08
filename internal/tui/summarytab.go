@@ -43,6 +43,7 @@ type SummaryTab struct {
 
 	// Build Progress
 	CurrentFile  string    // Filename only
+	CurrentStage string    // Current build stage (Compile, Link, Sign, etc.)
 	FileProgress int       // Current file number
 	FilesTotal   int       // Total files to process
 	StartTime    time.Time // For elapsed timer
@@ -63,6 +64,9 @@ type SummaryTab struct {
 	// Legacy fields (kept for compatibility)
 	Phases    []PhaseResult
 	FileCount int
+
+	// Context loading state
+	ContextLoaded bool // Set to true when context discovery completes
 
 	// Scroll state
 	ScrollPos   int
@@ -134,6 +138,11 @@ func (st *SummaryTab) SetSystemInfo(xcode, simulator string, deviceConnected boo
 	st.DeviceConnected = deviceConnected
 }
 
+// SetContextLoaded marks context discovery as complete
+func (st *SummaryTab) SetContextLoaded(loaded bool) {
+	st.ContextLoaded = loaded
+}
+
 // SetRunning marks the build as in progress
 func (st *SummaryTab) SetRunning() {
 	st.Status = BuildStatusRunning
@@ -144,13 +153,16 @@ func (st *SummaryTab) SetRunning() {
 }
 
 // UpdateProgress updates live build progress
-func (st *SummaryTab) UpdateProgress(file string, current, total int) {
+func (st *SummaryTab) UpdateProgress(file string, current, total int, stage string) {
 	// Extract just the filename
 	if file != "" {
 		st.CurrentFile = filepath.Base(file)
 	}
 	st.FileProgress = current
 	st.FilesTotal = total
+	if stage != "" {
+		st.CurrentStage = stage
+	}
 }
 
 // IncrementErrors increments the error count
@@ -309,6 +321,11 @@ func (st *SummaryTab) View(styles Styles) string {
 
 // idleView shows project info, system status, last build, and quick actions
 func (st *SummaryTab) idleView(styles Styles) string {
+	// Show loading state if context hasn't loaded yet
+	if !st.ContextLoaded {
+		return st.loadingView(styles)
+	}
+
 	cardWidth := st.Width - 8
 	if cardWidth > 70 {
 		cardWidth = 70
@@ -324,7 +341,7 @@ func (st *SummaryTab) idleView(styles Styles) string {
 	if st.ProjectName != "" {
 		projectContent = append(projectContent, st.ProjectName)
 	} else {
-		projectContent = append(projectContent, "No project loaded")
+		projectContent = append(projectContent, "No project configured")
 	}
 	if st.SchemeName != "" || st.BuildConfig != "" {
 		line := ""
@@ -418,6 +435,29 @@ func (st *SummaryTab) idleView(styles Styles) string {
 	)
 }
 
+// loadingView shows a loading indicator while context is being discovered
+func (st *SummaryTab) loadingView(styles Styles) string {
+	spinner := spinnerFrames[st.SpinnerFrame]
+	spinnerStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true)
+	textStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		"",
+		spinnerStyle.Render(spinner),
+		"",
+		textStyle.Render("Loading project..."),
+		"",
+	)
+
+	return lipgloss.Place(
+		st.Width,
+		st.Height,
+		lipgloss.Center,
+		lipgloss.Center,
+		content,
+	)
+}
+
 // buildingView shows live build progress with spinner
 func (st *SummaryTab) buildingView(styles Styles) string {
 	cardWidth := st.Width - 8
@@ -451,15 +491,41 @@ func (st *SummaryTab) buildingView(styles Styles) string {
 		buildContent = append(buildContent, "")
 	}
 
-	// Current file
-	fileLabel := "Compiling: "
-	fileName := st.CurrentFile
-	if fileName == "" {
-		fileName = "..."
-	}
+	// Current activity - show stage + file or just stage
+	var activityLine string
 	fileStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent)
-	fileLine := fileLabel + fileStyle.Render(fileName)
-	buildContent = append(buildContent, fileLine)
+	labelStyle := lipgloss.NewStyle().Foreground(styles.Colors.Text)
+
+	if st.CurrentFile != "" {
+		// We're compiling a specific file
+		label := "Compiling: "
+		if st.CurrentStage == "Link" {
+			label = "Linking: "
+		} else if st.CurrentStage == "Sign" {
+			label = "Signing: "
+		}
+		activityLine = labelStyle.Render(label) + fileStyle.Render(st.CurrentFile)
+	} else if st.CurrentStage != "" {
+		// We have a stage but no specific file
+		stageText := st.CurrentStage
+		switch st.CurrentStage {
+		case "Resolve":
+			stageText = "Resolving dependencies..."
+		case "Compile":
+			stageText = "Preparing to compile..."
+		case "Link":
+			stageText = "Linking..."
+		case "Sign":
+			stageText = "Signing..."
+		default:
+			stageText = st.CurrentStage + "..."
+		}
+		activityLine = fileStyle.Render(stageText)
+	} else {
+		// Initial state - no stage or file yet
+		activityLine = fileStyle.Render("Preparing build...")
+	}
+	buildContent = append(buildContent, activityLine)
 
 	cards = append(cards, st.renderCard("Building", buildContent, cardWidth, styles))
 

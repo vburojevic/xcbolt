@@ -485,8 +485,7 @@ func (it *IssuesTab) emptyView(styles Styles) string {
 	// Large icon
 	iconStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.Success).
-		Bold(true).
-		Padding(1, 0)
+		Bold(true)
 	bigIcon := iconStyle.Render(icons.Success)
 
 	msg := lipgloss.NewStyle().
@@ -497,7 +496,7 @@ func (it *IssuesTab) emptyView(styles Styles) string {
 		Foreground(styles.Colors.TextSubtle).
 		Render("Build completed without errors or warnings")
 
-	content := lipgloss.JoinVertical(lipgloss.Center, "", bigIcon, "", msg, "", hint)
+	content := lipgloss.JoinVertical(lipgloss.Center, bigIcon, "", msg, hint)
 
 	return lipgloss.Place(
 		it.Width,

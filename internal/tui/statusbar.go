@@ -383,6 +383,7 @@ func DefaultHints() []HintItem {
 		{Key: "1-3", Desc: "tabs"},
 		{Key: "/", Desc: "search"},
 		{Key: "?", Desc: "help"},
+		{Key: "q", Desc: "quit"},
 	}
 }
 

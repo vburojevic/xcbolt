@@ -259,6 +259,7 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 	lastTabWidth := tv.Width - (tabWidth * 2)
 
 	var lineParts []string
+	var underlineParts []string
 
 	for i, t := range tabs {
 		isActive := tv.ActiveTab == t.tab
@@ -267,13 +268,18 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 			cellWidth = lastTabWidth
 		}
 
-		// Base cell style (no background to match terminal)
-		cellBase := lipgloss.NewStyle().
-			Width(cellWidth).
-			MaxWidth(cellWidth).
-			MaxHeight(1)
+		// Alignment: Dashboard left, Stream center, Issues right
+		var align lipgloss.Position
+		switch i {
+		case 0:
+			align = lipgloss.Left
+		case 1:
+			align = lipgloss.Center
+		case 2:
+			align = lipgloss.Right
+		}
 
-		// Build content: icon label (badge)
+		// Build content: icon  label (badge) - with proper spacing
 		var iconStr, labelStr string
 		if isActive {
 			iconStr = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Render(t.icon)
@@ -283,7 +289,8 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 			labelStr = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted).Render(t.label)
 		}
 
-		lineContent := " " + iconStr + " " + labelStr
+		// Add space between icon and text
+		lineContent := iconStr + "  " + labelStr
 		if t.badge != "" {
 			badgeStyle := s.TabBadge
 			if tv.Counts.ErrorCount > 0 && t.tab == TabIssues {
@@ -292,25 +299,56 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 			lineContent += " " + badgeStyle.Render(t.badge)
 		}
 
+		// Base cell style with alignment
+		cellBase := lipgloss.NewStyle().
+			Width(cellWidth).
+			MaxWidth(cellWidth).
+			MaxHeight(1).
+			Align(align).
+			PaddingLeft(1).
+			PaddingRight(1)
+
 		// Render cell
 		lineParts = append(lineParts, cellBase.Render(lineContent))
+
+		// Build underline for this cell
+		underlineStyle := lipgloss.NewStyle().
+			Width(cellWidth).
+			MaxWidth(cellWidth).
+			Align(align).
+			PaddingLeft(1).
+			PaddingRight(1)
+
+		if isActive {
+			// Calculate underline width based on label length
+			underlineLen := len(t.icon) + 2 + len(t.label) // icon + spacing + label
+			if t.badge != "" {
+				underlineLen += 1 + len(t.badge)
+			}
+			underline := lipgloss.NewStyle().
+				Foreground(styles.Colors.Accent).
+				Render(strings.Repeat("─", underlineLen))
+			underlineParts = append(underlineParts, underlineStyle.Render(underline))
+		} else {
+			underlineParts = append(underlineParts, underlineStyle.Render(""))
+		}
 	}
 
 	line := lipgloss.JoinHorizontal(lipgloss.Top, lineParts...)
+	underline := lipgloss.JoinHorizontal(lipgloss.Top, underlineParts...)
 
-	// Ensure line fills full width
+	// Ensure lines fill full width
 	lineContainer := lipgloss.NewStyle().
 		Width(tv.Width).
 		MaxWidth(tv.Width).
 		Render(line)
 
-	// Render border
-	border := lipgloss.NewStyle().
-		Foreground(styles.Colors.Border).
+	underlineContainer := lipgloss.NewStyle().
 		Width(tv.Width).
-		Render(strings.Repeat("─", tv.Width))
+		MaxWidth(tv.Width).
+		Render(underline)
 
-	return lipgloss.JoinVertical(lipgloss.Left, lineContainer, border)
+	return lipgloss.JoinVertical(lipgloss.Left, lineContainer, underlineContainer)
 }
 
 // issuesSubtitle returns the subtitle for the Issues tab

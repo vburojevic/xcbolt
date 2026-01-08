@@ -232,6 +232,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride),
+		tickCmd(), // Start tick for loading spinner animation
 	)
 }
 
@@ -297,11 +298,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.lastErr = msg.err.Error()
 			m.setStatus("Context load failed")
+			// Still mark as loaded (with error) so we don't show endless spinner
+			m.tabView.SummaryTab.SetContextLoaded(true)
 			break
 		}
 		m.info = msg.info
 		m.cfg = msg.cfg
 		m.applyTUIConfig()
+
+		// Mark context as loaded for Dashboard
+		m.tabView.SummaryTab.SetContextLoaded(true)
 
 		// Fetch git branch
 		m.gitBranch = getGitBranch(m.projectRoot)
@@ -320,8 +326,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tickMsg:
-		// Only continue ticking if we need animation (spinner while running)
-		if m.running {
+		// Continue ticking if we need animation (spinner while running or loading)
+		needsAnimation := m.running || !m.tabView.SummaryTab.ContextLoaded
+		if needsAnimation {
 			cmds = append(cmds, tickCmd())
 			// Advance Dashboard spinner (~4 times per second)
 			m.tickCount++
@@ -1270,7 +1277,7 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 	m.progressBar.SetProgress(m.progressCur, m.progressTotal, m.currentStage)
 
 	// Update Dashboard with live progress
-	m.tabView.SummaryTab.UpdateProgress(currentFile, m.progressCur, m.progressTotal)
+	m.tabView.SummaryTab.UpdateProgress(currentFile, m.progressCur, m.progressTotal, m.currentStage)
 }
 
 func isPrettyEvent(ev core.Event) bool {
