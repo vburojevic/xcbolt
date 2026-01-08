@@ -1406,7 +1406,7 @@ func (m *Model) startOp(name string) tea.Cmd {
 	m.streamView.Clear()
 
 	// Initialize Dashboard for live activity
-	m.tabView.SummaryTab.SetRunning()
+	m.tabView.SummaryTab.SetRunning(name)
 
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))

@@ -313,11 +313,11 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		// Tabs
 		{k.Tab1, k.Tab2, k.Tab3, k.TabNext},
 		// View controls
-		{k.ToggleRawView, k.ToggleLineNumbers, k.ToggleTimestamps, k.ToggleErrorsOnly},
+		{k.ToggleRawView, k.ToggleLineNumbers, k.ToggleTimestamps, k.ToggleErrorsOnly, k.ExpandAll, k.CollapseAll},
 		// Scrolling
 		{k.ScrollUp, k.ScrollDown, k.PageUp, k.PageDown, k.ScrollTop, k.ScrollBottom},
 		// Navigation & Other
-		{k.Search, k.NextError, k.PrevError, k.CopyLine, k.CopyVisible, k.OpenXcode, k.Help, k.Quit},
+		{k.Search, k.NextError, k.PrevError, k.CopyLine, k.CopyVisible, k.OpenXcode, k.OpenEditor, k.Cancel, k.Help, k.Quit},
 	}
 }
 

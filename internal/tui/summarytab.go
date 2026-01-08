@@ -30,6 +30,9 @@ var spinnerFrames = []string{"◐", "◓", "◑", "◒"}
 type SummaryTab struct {
 	Status BuildStatus
 
+	// Current action being performed (build, run, test, clean)
+	ActionType string
+
 	// Project Info (idle state)
 	ProjectName  string
 	SchemeName   string
@@ -143,9 +146,10 @@ func (st *SummaryTab) SetContextLoaded(loaded bool) {
 	st.ContextLoaded = loaded
 }
 
-// SetRunning marks the build as in progress
-func (st *SummaryTab) SetRunning() {
+// SetRunning marks an action as in progress
+func (st *SummaryTab) SetRunning(actionType string) {
 	st.Status = BuildStatusRunning
+	st.ActionType = actionType
 	st.StartTime = time.Now()
 	st.SpinnerFrame = 0
 	st.ErrorCount = 0
@@ -458,7 +462,7 @@ func (st *SummaryTab) loadingView(styles Styles) string {
 	)
 }
 
-// buildingView shows live build progress with spinner
+// buildingView shows live progress with spinner
 func (st *SummaryTab) buildingView(styles Styles) string {
 	cardWidth := st.Width - 8
 	if cardWidth > 70 {
@@ -470,17 +474,37 @@ func (st *SummaryTab) buildingView(styles Styles) string {
 
 	var cards []string
 
-	// Main Building Card
+	// Determine action label based on ActionType
+	actionLabel := "BUILDING"
+	cardTitle := "Building"
+	switch st.ActionType {
+	case "clean":
+		actionLabel = "CLEANING"
+		cardTitle = "Cleaning"
+	case "test":
+		actionLabel = "TESTING"
+		cardTitle = "Testing"
+	case "run":
+		actionLabel = "RUNNING"
+		cardTitle = "Running"
+	}
+
+	// Main Progress Card
 	buildContent := []string{}
 
-	// Spinner + BUILDING... + Timer
+	// Spinner + ACTION... + Timer (properly spaced)
 	spinner := spinnerFrames[st.SpinnerFrame]
 	spinnerStyle := lipgloss.NewStyle().Foreground(styles.Colors.Running).Bold(true)
 	timerStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 
-	headerLine := spinnerStyle.Render(spinner+" BUILDING...") +
-		strings.Repeat(" ", cardWidth-30) +
-		timerStyle.Render(st.ElapsedTime())
+	actionText := spinnerStyle.Render(spinner + " " + actionLabel + "...")
+	timerText := timerStyle.Render(st.ElapsedTime())
+	actionWidth := lipgloss.Width(spinner+" "+actionLabel+"...") + lipgloss.Width(st.ElapsedTime())
+	padding := cardWidth - 4 - actionWidth
+	if padding < 1 {
+		padding = 1
+	}
+	headerLine := actionText + strings.Repeat(" ", padding) + timerText
 	buildContent = append(buildContent, headerLine)
 	buildContent = append(buildContent, "")
 
@@ -523,11 +547,20 @@ func (st *SummaryTab) buildingView(styles Styles) string {
 		activityLine = fileStyle.Render(stageText)
 	} else {
 		// Initial state - no stage or file yet
-		activityLine = fileStyle.Render("Preparing build...")
+		switch st.ActionType {
+		case "clean":
+			activityLine = fileStyle.Render("Cleaning derived data...")
+		case "test":
+			activityLine = fileStyle.Render("Preparing tests...")
+		case "run":
+			activityLine = fileStyle.Render("Preparing to run...")
+		default:
+			activityLine = fileStyle.Render("Preparing build...")
+		}
 	}
 	buildContent = append(buildContent, activityLine)
 
-	cards = append(cards, st.renderCard("Building", buildContent, cardWidth, styles))
+	cards = append(cards, st.renderCard(cardTitle, buildContent, cardWidth, styles))
 
 	// Issues Card (only if errors or warnings)
 	if st.ErrorCount > 0 || st.WarningCount > 0 {
@@ -599,14 +632,13 @@ func (st *SummaryTab) successView(styles Styles) string {
 	successContent := []string{""}
 	successIcon := lipgloss.NewStyle().Foreground(styles.Colors.Success).Bold(true)
 	successText := successIcon.Render(styles.Icons.Success + " BUILD SUCCEEDED")
+	durationStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+	durationText := durationStyle.Render(st.Duration)
 
-	// Center the text
-	padding := (cardWidth - 20) / 2
-	if padding < 0 {
-		padding = 0
-	}
-	successContent = append(successContent, strings.Repeat(" ", padding)+successText)
-	successContent = append(successContent, strings.Repeat(" ", padding+5)+st.Duration)
+	// Center text using lipgloss width calculations
+	innerWidth := cardWidth - 4 // Account for card borders
+	successContent = append(successContent, lipgloss.PlaceHorizontal(innerWidth, lipgloss.Center, successText))
+	successContent = append(successContent, lipgloss.PlaceHorizontal(innerWidth, lipgloss.Center, durationText))
 	successContent = append(successContent, "")
 
 	cards = append(cards, st.renderCard("Build Succeeded", successContent, cardWidth, styles))
@@ -676,14 +708,13 @@ func (st *SummaryTab) failedView(styles Styles) string {
 	failedContent := []string{""}
 	failedIcon := lipgloss.NewStyle().Foreground(styles.Colors.Error).Bold(true)
 	failedText := failedIcon.Render(styles.Icons.Error + " BUILD FAILED")
+	durationStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+	durationText := durationStyle.Render(st.Duration)
 
-	// Center the text
-	padding := (cardWidth - 18) / 2
-	if padding < 0 {
-		padding = 0
-	}
-	failedContent = append(failedContent, strings.Repeat(" ", padding)+failedText)
-	failedContent = append(failedContent, strings.Repeat(" ", padding+5)+st.Duration)
+	// Center text using lipgloss width calculations
+	innerWidth := cardWidth - 4 // Account for card borders
+	failedContent = append(failedContent, lipgloss.PlaceHorizontal(innerWidth, lipgloss.Center, failedText))
+	failedContent = append(failedContent, lipgloss.PlaceHorizontal(innerWidth, lipgloss.Center, durationText))
 	failedContent = append(failedContent, "")
 
 	cards = append(cards, st.renderCard("Build Failed", failedContent, cardWidth, styles))
@@ -702,7 +733,7 @@ func (st *SummaryTab) failedView(styles Styles) string {
 	summaryContent = append(summaryContent, strings.Join(parts, "   "))
 
 	hintStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
-	summaryContent = append(summaryContent, hintStyle.Render("Press 3 to view Issues"))
+	summaryContent = append(summaryContent, hintStyle.Render("Press 2 to view Issues"))
 	cards = append(cards, st.renderCard("Summary", summaryContent, cardWidth, styles))
 
 	// Quick Actions
