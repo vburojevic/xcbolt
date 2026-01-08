@@ -482,12 +482,12 @@ func (it *IssuesTab) getByType(issueType IssueType) []Issue {
 func (it *IssuesTab) emptyView(styles Styles) string {
 	icons := styles.Icons
 
-	// Large icon (3x size effect)
+	// Large icon
 	iconStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.Success).
 		Bold(true).
-		Padding(1, 3)
-	bigIcon := iconStyle.Render(icons.Success + " " + icons.Success + " " + icons.Success)
+		Padding(1, 0)
+	bigIcon := iconStyle.Render(icons.Success)
 
 	msg := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle).
