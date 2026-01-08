@@ -15,20 +15,20 @@ import (
 type Tab int
 
 const (
-	TabStream Tab = iota
+	TabDashboard Tab = iota
+	TabStream
 	TabIssues
-	TabSummary
 )
 
 // String returns the display name for a tab
 func (t Tab) String() string {
 	switch t {
+	case TabDashboard:
+		return "Dashboard"
 	case TabStream:
 		return "Stream"
 	case TabIssues:
 		return "Issues"
-	case TabSummary:
-		return "Summary"
 	default:
 		return "Unknown"
 	}
@@ -76,7 +76,7 @@ type TabView struct {
 // NewTabView creates a new TabView with all tabs initialized
 func NewTabView() *TabView {
 	return &TabView{
-		ActiveTab:       TabStream,
+		ActiveTab:       TabDashboard,
 		StreamTab:       NewStreamTab(),
 		IssuesTab:       NewIssuesTab(),
 		SummaryTab:      NewSummaryTab(),
@@ -165,7 +165,7 @@ func (tv *TabView) ScrollUp(n int) {
 		tv.StreamTab.ScrollUp(n)
 	case TabIssues:
 		tv.IssuesTab.ScrollUp(n)
-	case TabSummary:
+	case TabDashboard:
 		tv.SummaryTab.ScrollUp(n)
 	}
 }
@@ -177,7 +177,7 @@ func (tv *TabView) ScrollDown(n int) {
 		tv.StreamTab.ScrollDown(n)
 	case TabIssues:
 		tv.IssuesTab.ScrollDown(n)
-	case TabSummary:
+	case TabDashboard:
 		tv.SummaryTab.ScrollDown(n)
 	}
 }
@@ -189,7 +189,7 @@ func (tv *TabView) GotoTop() {
 		tv.StreamTab.GotoTop()
 	case TabIssues:
 		tv.IssuesTab.GotoTop()
-	case TabSummary:
+	case TabDashboard:
 		tv.SummaryTab.GotoTop()
 	}
 }
@@ -201,7 +201,7 @@ func (tv *TabView) GotoBottom() {
 		tv.StreamTab.GotoBottom()
 	case TabIssues:
 		tv.IssuesTab.GotoBottom()
-	case TabSummary:
+	case TabDashboard:
 		tv.SummaryTab.GotoBottom()
 	}
 }
@@ -219,11 +219,13 @@ func (tv *TabView) View(styles Styles) string {
 }
 
 // renderTabBar renders the 2-line tab bar
+// NOTE: Background is pushed into each cell to prevent ANSI reset "holes"
 func (tv *TabView) renderTabBar(styles Styles) string {
 	s := styles.TabBar
 	icons := styles.Icons
+	bgColor := styles.Colors.Surface
 
-	// Build each tab
+	// Build each tab (order: Dashboard, Stream, Issues)
 	tabs := []struct {
 		tab      Tab
 		icon     string
@@ -231,6 +233,13 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 		subtitle string
 		badge    string
 	}{
+		{
+			tab:      TabDashboard,
+			icon:     icons.TabSummary, // Dashboard icon
+			label:    "Dashboard",
+			subtitle: "Live stats",
+			badge:    "",
+		},
 		{
 			tab:      TabStream,
 			icon:     icons.TabStream,
@@ -245,73 +254,79 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 			subtitle: tv.issuesSubtitle(),
 			badge:    tv.issuesBadge(),
 		},
-		{
-			tab:      TabSummary,
-			icon:     icons.TabSummary,
-			label:    "Summary",
-			subtitle: "Results",
-			badge:    "",
-		},
 	}
 
-	// Calculate tab width - distribute evenly (account for container padding)
-	availableWidth := tv.Width - 2 // Container has 1 char padding on each side
-	tabWidth := availableWidth / 3
+	// Calculate tab width - distribute evenly
+	tabWidth := tv.Width / 3
 	if tabWidth < 15 {
 		tabWidth = 15
 	}
+	// Last tab gets remaining width to fill exactly
+	lastTabWidth := tv.Width - (tabWidth * 2)
 
 	var line1Parts []string
 	var line2Parts []string
 
 	for i, t := range tabs {
 		isActive := tv.ActiveTab == t.tab
-
-		// Style based on active state - use same base style for consistency
-		var iconStyle, labelStyle, subtitleStyle lipgloss.Style
-		if isActive {
-			iconStyle = lipgloss.NewStyle().Foreground(styles.Colors.Accent)
-			labelStyle = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true)
-			subtitleStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
-		} else {
-			iconStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
-			labelStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
-			subtitleStyle = lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+		cellWidth := tabWidth
+		if i == 2 {
+			cellWidth = lastTabWidth
 		}
 
-		// Line 1: [num] icon label (badge)
-		keyHint := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle).Render(fmt.Sprintf("[%d]", i+1))
-		iconStr := iconStyle.Render(t.icon)
-		labelStr := labelStyle.Render(t.label)
+		// Base cell style with background - key fix for color consistency
+		cellBase := lipgloss.NewStyle().
+			Background(bgColor).
+			Width(cellWidth).
+			MaxWidth(cellWidth).
+			MaxHeight(1)
 
-		line1Content := keyHint + " " + iconStr + " " + labelStr
+		// Build line 1 content: [num] icon label (badge)
+		keyHint := lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextSubtle).Render(fmt.Sprintf("[%d]", i+1))
+
+		var iconStr, labelStr string
+		if isActive {
+			iconStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.Accent).Render(t.icon)
+			labelStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.Accent).Bold(true).Render(t.label)
+		} else {
+			iconStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextSubtle).Render(t.icon)
+			labelStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextMuted).Render(t.label)
+		}
+
+		line1Content := " " + keyHint + " " + iconStr + " " + labelStr
 		if t.badge != "" {
-			badgeStyle := s.TabBadge
+			badgeStyle := s.TabBadge.Background(bgColor)
 			if tv.Counts.ErrorCount > 0 && t.tab == TabIssues {
-				badgeStyle = s.TabBadgeError
+				badgeStyle = s.TabBadgeError.Background(bgColor)
 			}
 			line1Content += " " + badgeStyle.Render(t.badge)
 		}
 
-		// Line 2: subtitle (indented to align with label)
-		line2Content := "    " + subtitleStyle.Render(t.subtitle)
+		// Build line 2 content: subtitle (indented)
+		var subtitleStr string
+		if isActive {
+			subtitleStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextMuted).Render(t.subtitle)
+		} else {
+			subtitleStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextSubtle).Render(t.subtitle)
+		}
+		line2Content := "     " + subtitleStr
 
-		// Use a simple fixed-width style without extra padding
-		fixedStyle := lipgloss.NewStyle().Width(tabWidth)
-		line1Styled := fixedStyle.Render(line1Content)
-		line2Styled := fixedStyle.Render(line2Content)
-
-		line1Parts = append(line1Parts, line1Styled)
-		line2Parts = append(line2Parts, line2Styled)
+		// Render cells with background
+		line1Parts = append(line1Parts, cellBase.Render(line1Content))
+		line2Parts = append(line2Parts, cellBase.Render(line2Content))
 	}
 
 	line1 := lipgloss.JoinHorizontal(lipgloss.Top, line1Parts...)
 	line2 := lipgloss.JoinHorizontal(lipgloss.Top, line2Parts...)
 
-	// Apply container style
-	tabBar := lipgloss.JoinVertical(lipgloss.Left, line1, line2)
+	// Render border manually with background
+	border := lipgloss.NewStyle().
+		Background(bgColor).
+		Foreground(styles.Colors.Border).
+		Width(tv.Width).
+		Render(strings.Repeat("─", tv.Width))
 
-	return s.Container.Width(tv.Width).Render(tabBar)
+	return lipgloss.JoinVertical(lipgloss.Left, line1, line2, border)
 }
 
 // issuesSubtitle returns the subtitle for the Issues tab
@@ -341,7 +356,7 @@ func (tv *TabView) renderContent(styles Styles) string {
 		return tv.StreamTab.View(styles)
 	case TabIssues:
 		return tv.IssuesTab.View(styles)
-	case TabSummary:
+	case TabDashboard:
 		return tv.SummaryTab.View(styles)
 	default:
 		return ""

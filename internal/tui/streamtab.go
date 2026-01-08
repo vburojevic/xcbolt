@@ -346,20 +346,23 @@ func (st *StreamTab) shortenPath(path string) string {
 // emptyView renders the empty state
 func (st *StreamTab) emptyView(styles Styles) string {
 	icons := styles.Icons
-	emptyStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextSubtle).
-		Align(lipgloss.Center)
 
-	icon := lipgloss.NewStyle().
+	// Large icon (5x size effect) - use Idle icon (different from tab icon)
+	iconStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextMuted).
-		Render(icons.TabStream)
+		Bold(true).
+		Padding(1, 0)
+	bigIcon := iconStyle.Render(icons.Idle + "  " + icons.Idle + "  " + icons.Idle + "  " + icons.Idle + "  " + icons.Idle)
 
-	msg := emptyStyle.Render("Waiting for build output...")
+	msg := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextSubtle).
+		Render("Waiting for build output...")
+
 	hint := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle).
 		Render("Press b to build, r to run, t to test")
 
-	content := lipgloss.JoinVertical(lipgloss.Center, "", icon, "", msg, "", hint)
+	content := lipgloss.JoinVertical(lipgloss.Center, "", bigIcon, "", msg, "", hint)
 
 	return lipgloss.Place(
 		st.Width,

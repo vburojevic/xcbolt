@@ -102,6 +102,7 @@ func (l Layout) SplitBottomHeight() int {
 // =============================================================================
 
 // RenderHeader renders the full-width header at the top
+// IMPORTANT: Forces single-line to prevent height changes causing flicker
 func (l Layout) RenderHeader(content string, styles Styles) string {
 	// Ensure we always have visible content
 	if content == "" {
@@ -109,13 +110,23 @@ func (l Layout) RenderHeader(content string, styles Styles) string {
 	}
 
 	if l.MinimalMode {
-		// Minimal mode: single line
-		return " " + content
+		// Minimal mode: single line, fixed width
+		return lipgloss.NewStyle().
+			Width(l.Width).
+			MaxWidth(l.Width).
+			MaxHeight(1).
+			Render(" " + content)
 	}
 
-	// Full mode: content line + separator
-	// Use padding for the content
-	contentLine := " " + content
+	// Full mode: content line (single-line, clipped) + separator
+	// Force single-line to prevent wrapping which causes flicker
+	contentLine := lipgloss.NewStyle().
+		Width(l.Width).
+		MaxWidth(l.Width).
+		MaxHeight(1).
+		Padding(0, 1).
+		Render(content)
+
 	separator := lipgloss.NewStyle().
 		Foreground(styles.Colors.Border).
 		Render(strings.Repeat("─", l.Width))

@@ -107,19 +107,19 @@ func (s StatusBar) ViewWithMinimal(width int, styles Styles, minimal bool) strin
 	// Ensure we always return something visible
 	if strings.TrimSpace(content) == "" {
 		brandStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.Colors.Accent)
-		content = brandStyle.Render("xcbolt")
+		content = brandStyle.Render(icons.Bolt + " xcbolt")
 	}
 
 	return content
 }
 
-// renderMinimalView renders compact single-line status: xcbolt | Scheme | Device | Status
+// renderMinimalView renders compact single-line status: ⚡xcbolt | Scheme | Device | Status
 func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) string {
 	sep := " | "
 
-	// Brand
+	// Brand with bolt icon
 	brandStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.Colors.Accent)
-	brand := brandStyle.Render("xcbolt")
+	brand := brandStyle.Render(icons.Bolt + " xcbolt")
 
 	// Scheme (truncated if needed)
 	scheme := s.Scheme
@@ -170,11 +170,11 @@ func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) stri
 func (s StatusBar) renderLeftSection(styles Styles, icons Icons) string {
 	var parts []string
 
-	// Brand
+	// Brand with bolt icon
 	brandStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(styles.Colors.Accent)
-	parts = append(parts, brandStyle.Render("xcbolt"))
+	parts = append(parts, brandStyle.Render(icons.Bolt+" xcbolt"))
 
 	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
 	sep := sepStyle.Render(" · ")

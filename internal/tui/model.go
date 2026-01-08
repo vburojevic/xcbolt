@@ -722,16 +722,16 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	// Tab navigation
 	case keyMatches(msg, m.keys.Tab1):
+		m.tabView.SetActiveTab(TabDashboard)
+		m.setStatus("Dashboard")
+
+	case keyMatches(msg, m.keys.Tab2):
 		m.tabView.SetActiveTab(TabStream)
 		m.setStatus("Stream")
 
-	case keyMatches(msg, m.keys.Tab2):
+	case keyMatches(msg, m.keys.Tab3):
 		m.tabView.SetActiveTab(TabIssues)
 		m.setStatus("Issues")
-
-	case keyMatches(msg, m.keys.Tab3):
-		m.tabView.SetActiveTab(TabSummary)
-		m.setStatus("Summary")
 
 	case keyMatches(msg, m.keys.TabNext):
 		if !m.runMode.Active { // Don't conflict with SwitchPane in run mode
@@ -1149,6 +1149,11 @@ func (m *Model) handleEvent(ev core.Event) {
 	// Track progress for stage indicators
 	m.parseProgressFromEvent(ev)
 	// Error/warning counts are tracked by PhaseView through categorizeLogLine
+
+	// Route errors/warnings to Dashboard's recent issues
+	if ev.Type == "error" || strings.Contains(strings.ToLower(ev.Msg), "error:") {
+		m.tabView.SummaryTab.AddRecentError(ev.Msg)
+	}
 }
 
 func (m *Model) parseProgressFromEvent(ev core.Event) {
@@ -1166,24 +1171,47 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 		return
 	}
 
+	// Track previous stage to detect phase completions
+	prevStage := m.currentStage
+
 	// Extract stage from common xcodebuild output patterns
 	switch {
 	case strings.Contains(msg, "Compiling"):
-		m.currentStage = "Compiling"
+		m.currentStage = "Compile"
 	case strings.Contains(msg, "Linking"):
-		m.currentStage = "Linking"
-	case strings.Contains(msg, "Signing"):
-		m.currentStage = "Signing"
+		m.currentStage = "Link"
+	case strings.Contains(msg, "Signing") || strings.Contains(msg, "CodeSign"):
+		m.currentStage = "Sign"
 	case strings.Contains(msg, "Processing"):
-		m.currentStage = "Processing"
+		m.currentStage = "Compile"
 	case strings.Contains(msg, "Copying"):
-		m.currentStage = "Copying"
+		m.currentStage = "Link"
 	case strings.Contains(msg, "Running"):
 		m.currentStage = "Running"
 	case strings.Contains(msg, "Testing"):
 		m.currentStage = "Testing"
 	case strings.Contains(msg, "Analyzing"):
 		m.currentStage = "Analyzing"
+	case strings.Contains(msg, "Resolving") || strings.Contains(msg, "Resolved"):
+		m.currentStage = "Resolve"
+	}
+
+	// Mark previous phase as completed when stage changes
+	if prevStage != "" && prevStage != m.currentStage {
+		m.tabView.SummaryTab.CompletePhase(prevStage)
+	}
+
+	// Extract current file being processed
+	currentFile := ""
+	if strings.Contains(msg, ".swift") || strings.Contains(msg, ".m") || strings.Contains(msg, ".mm") {
+		// Try to extract filename from the line
+		words := strings.Fields(msg)
+		for _, word := range words {
+			if strings.HasSuffix(word, ".swift") || strings.HasSuffix(word, ".m") || strings.HasSuffix(word, ".mm") {
+				currentFile = word
+				break
+			}
+		}
 	}
 
 	// Try to extract progress numbers (e.g., "47 of 100 tasks")
@@ -1211,6 +1239,9 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 
 	// Update progress bar
 	m.progressBar.SetProgress(m.progressCur, m.progressTotal, m.currentStage)
+
+	// Update Dashboard with live progress
+	m.tabView.SummaryTab.UpdateProgress(m.currentStage, currentFile, m.progressCur, m.progressTotal)
 }
 
 func isPrettyEvent(ev core.Event) bool {
@@ -1337,6 +1368,10 @@ func (m *Model) startOp(name string) tea.Cmd {
 	m.tabView.Clear()
 	m.phaseView.Clear()
 	m.streamView.Clear()
+
+	// Initialize Dashboard for live activity
+	m.tabView.SummaryTab.SetRunning()
+	m.tabView.SummaryTab.SetPhases([]string{"Resolve", "Compile", "Link", "Sign"})
 
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
@@ -1922,7 +1957,7 @@ func (m *Model) copyCurrentLine() tea.Cmd {
 		if issue := m.tabView.IssuesTab.GetSelectedIssue(); issue != nil {
 			content = issue.FullText
 		}
-	case TabSummary:
+	case TabDashboard:
 		content = "" // Summary tab doesn't have line-by-line content
 	}
 
@@ -1949,7 +1984,7 @@ func (m *Model) copyVisibleContent() tea.Cmd {
 			lines = append(lines, issue.FullText)
 		}
 		content = strings.Join(lines, "\n")
-	case TabSummary:
+	case TabDashboard:
 		content = "" // Summary tab doesn't have copyable content
 	}
 

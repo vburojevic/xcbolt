@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -33,6 +34,16 @@ type SummaryTab struct {
 	FileCount   int
 	TargetCount int
 
+	// Live activity (during build)
+	CurrentPhase    string    // "Compiling", "Linking", etc.
+	CurrentFile     string    // File being processed
+	FileProgress    int       // Current file number
+	FilesTotal      int       // Total files to process
+	StartTime       time.Time // For elapsed timer
+	RecentErrors    []string  // Last 3 errors (compact)
+	PhaseList       []string  // All phases for timeline
+	CompletedPhases []string  // Completed phase names
+
 	// Scroll state
 	ScrollPos   int
 	VisibleRows int
@@ -45,8 +56,11 @@ type SummaryTab struct {
 // NewSummaryTab creates a new SummaryTab
 func NewSummaryTab() *SummaryTab {
 	return &SummaryTab{
-		Status: BuildStatusPending,
-		Phases: make([]PhaseResult, 0),
+		Status:          BuildStatusPending,
+		Phases:          make([]PhaseResult, 0),
+		RecentErrors:    make([]string, 0, 3),
+		PhaseList:       make([]string, 0),
+		CompletedPhases: make([]string, 0),
 	}
 }
 
@@ -67,6 +81,16 @@ func (st *SummaryTab) Clear() {
 	st.FileCount = 0
 	st.TargetCount = 0
 	st.ScrollPos = 0
+
+	// Reset live activity
+	st.CurrentPhase = ""
+	st.CurrentFile = ""
+	st.FileProgress = 0
+	st.FilesTotal = 0
+	st.StartTime = time.Time{}
+	st.RecentErrors = st.RecentErrors[:0]
+	st.PhaseList = st.PhaseList[:0]
+	st.CompletedPhases = st.CompletedPhases[:0]
 }
 
 // SetResult updates the summary with build results
@@ -90,6 +114,60 @@ func (st *SummaryTab) SetResult(success bool, duration string, phases []PhaseRes
 // SetRunning marks the build as in progress
 func (st *SummaryTab) SetRunning() {
 	st.Status = BuildStatusRunning
+	st.StartTime = time.Now()
+}
+
+// =============================================================================
+// Live Activity Updates
+// =============================================================================
+
+// UpdateProgress updates live build progress
+func (st *SummaryTab) UpdateProgress(phase string, file string, current, total int) {
+	st.CurrentPhase = phase
+	st.CurrentFile = file
+	st.FileProgress = current
+	st.FilesTotal = total
+}
+
+// AddRecentError adds an error to the recent errors list (keeps last 3)
+func (st *SummaryTab) AddRecentError(msg string) {
+	// Truncate message if too long
+	if len(msg) > 60 {
+		msg = msg[:57] + "..."
+	}
+	st.RecentErrors = append(st.RecentErrors, msg)
+	// Keep only last 3
+	if len(st.RecentErrors) > 3 {
+		st.RecentErrors = st.RecentErrors[len(st.RecentErrors)-3:]
+	}
+}
+
+// SetPhases sets the list of all phases for the timeline
+func (st *SummaryTab) SetPhases(phases []string) {
+	st.PhaseList = phases
+	st.CompletedPhases = st.CompletedPhases[:0]
+}
+
+// CompletePhase marks a phase as completed
+func (st *SummaryTab) CompletePhase(phase string) {
+	// Check if already completed
+	for _, p := range st.CompletedPhases {
+		if p == phase {
+			return
+		}
+	}
+	st.CompletedPhases = append(st.CompletedPhases, phase)
+}
+
+// ElapsedTime returns the elapsed time since build started
+func (st *SummaryTab) ElapsedTime() string {
+	if st.StartTime.IsZero() {
+		return "0:00"
+	}
+	d := time.Since(st.StartTime)
+	mins := int(d.Minutes())
+	secs := int(d.Seconds()) % 60
+	return fmt.Sprintf("%d:%02d", mins, secs)
 }
 
 // =============================================================================
@@ -153,25 +231,32 @@ func (st *SummaryTab) View(styles Styles) string {
 	}
 }
 
-// pendingView shows the waiting state
+// pendingView shows the waiting state with large bolt icon
 func (st *SummaryTab) pendingView(styles Styles) string {
 	icons := styles.Icons
 
-	iconStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextMuted)
+	// Large bolt icon (5x)
+	boltStyle := lipgloss.NewStyle().
+		Foreground(styles.Colors.Accent).
+		Bold(true).
+		Padding(1, 0)
+	bigBolt := boltStyle.Render(icons.Bolt + "  " + icons.Bolt + "  " + icons.Bolt + "  " + icons.Bolt + "  " + icons.Bolt)
 
-	msgStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextSubtle)
+	titleStyle := lipgloss.NewStyle().
+		Foreground(styles.Colors.Text).
+		Bold(true)
+	title := titleStyle.Render(icons.Bolt + " xcbolt")
 
-	hintStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextSubtle)
+	msg := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextSubtle).
+		Render("No build results yet")
 
-	icon := iconStyle.Render(icons.TabSummary)
-	msg := msgStyle.Render("No build results yet")
-	hint := hintStyle.Render("Press b to build, r to run, t to test")
+	hint := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextSubtle).
+		Render("Press b to build, r to run, t to test")
 
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		"", "", icon, "", msg, "", hint,
+		bigBolt, "", title, "", msg, "", hint,
 	)
 
 	return lipgloss.Place(
@@ -183,22 +268,77 @@ func (st *SummaryTab) pendingView(styles Styles) string {
 	)
 }
 
-// runningView shows the in-progress state
+// runningView shows the in-progress state with live stats
 func (st *SummaryTab) runningView(styles Styles) string {
 	icons := styles.Icons
+	var sections []string
 
-	iconStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Running)
+	// === HEADER: BUILDING... + Elapsed Timer ===
+	buildingIcon := lipgloss.NewStyle().
+		Foreground(styles.Colors.Running).
+		Bold(true).
+		Render(icons.Running)
 
-	msgStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Text)
+	buildingText := lipgloss.NewStyle().
+		Foreground(styles.Colors.Running).
+		Bold(true).
+		Render("BUILDING...")
 
-	icon := iconStyle.Render(icons.Running)
-	msg := msgStyle.Render("Build in progress...")
+	timerStyle := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextMuted)
+	timer := timerStyle.Render("⏱ " + st.ElapsedTime())
 
-	content := lipgloss.JoinVertical(lipgloss.Center,
-		"", "", icon, "", msg,
-	)
+	header := lipgloss.JoinHorizontal(lipgloss.Center,
+		buildingIcon, " ", buildingText, "              ", timer)
+	sections = append(sections, "", header, "")
+
+	// === PROGRESS BAR: File Counter ===
+	if st.FilesTotal > 0 {
+		progressBar := st.renderProgressBar(styles)
+		sections = append(sections, progressBar, "")
+	}
+
+	// === PHASE CARDS: Timeline of phases ===
+	if len(st.PhaseList) > 0 {
+		phaseCards := st.renderPhaseCards(styles)
+		sections = append(sections, phaseCards, "")
+	}
+
+	// === CURRENT FILE ===
+	if st.CurrentFile != "" {
+		fileLabel := lipgloss.NewStyle().
+			Foreground(styles.Colors.TextMuted).
+			Render(st.CurrentPhase + ": ")
+		fileName := st.CurrentFile
+		// Shorten path if too long
+		if len(fileName) > 40 {
+			parts := strings.Split(fileName, "/")
+			if len(parts) > 2 {
+				fileName = ".../" + strings.Join(parts[len(parts)-2:], "/")
+			}
+		}
+		fileStyle := lipgloss.NewStyle().
+			Foreground(styles.Colors.Accent)
+		fileLine := fileLabel + fileStyle.Render(fileName)
+		sections = append(sections, fileLine, "")
+	}
+
+	// === RECENT ERRORS (last 3) ===
+	if len(st.RecentErrors) > 0 {
+		errorHeader := lipgloss.NewStyle().
+			Foreground(styles.Colors.TextMuted).
+			Render("Recent Issues:")
+		sections = append(sections, errorHeader)
+
+		for _, errMsg := range st.RecentErrors {
+			errStyle := lipgloss.NewStyle().
+				Foreground(styles.Colors.Error)
+			errLine := errStyle.Render(icons.Error + " " + errMsg)
+			sections = append(sections, errLine)
+		}
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Center, sections...)
 
 	return lipgloss.Place(
 		st.Width,
@@ -207,6 +347,80 @@ func (st *SummaryTab) runningView(styles Styles) string {
 		lipgloss.Center,
 		content,
 	)
+}
+
+// renderProgressBar renders a file progress bar
+func (st *SummaryTab) renderProgressBar(styles Styles) string {
+	width := 30
+	if st.FilesTotal == 0 {
+		return ""
+	}
+
+	// Calculate progress
+	progress := float64(st.FileProgress) / float64(st.FilesTotal)
+	filled := int(progress * float64(width))
+	if filled > width {
+		filled = width
+	}
+
+	// Build progress bar
+	filledStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent)
+	emptyStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+
+	bar := filledStyle.Render(strings.Repeat("═", filled)) +
+		emptyStyle.Render(strings.Repeat("░", width-filled))
+
+	// Counter
+	counterStyle := lipgloss.NewStyle().Foreground(styles.Colors.Text)
+	counter := counterStyle.Render(fmt.Sprintf(" %d/%d", st.FileProgress, st.FilesTotal))
+
+	return bar + counter
+}
+
+// renderPhaseCards renders the phase timeline
+func (st *SummaryTab) renderPhaseCards(styles Styles) string {
+	icons := styles.Icons
+	var parts []string
+
+	for i, phase := range st.PhaseList {
+		isCompleted := st.isPhaseCompleted(phase)
+		isCurrent := phase == st.CurrentPhase
+
+		var icon string
+		var style lipgloss.Style
+
+		if isCompleted {
+			icon = icons.Success
+			style = lipgloss.NewStyle().Foreground(styles.Colors.Success)
+		} else if isCurrent {
+			icon = icons.Running
+			style = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true)
+		} else {
+			icon = "○"
+			style = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		}
+
+		card := style.Render(icon + " " + phase)
+		parts = append(parts, card)
+
+		// Add arrow separator (except after last)
+		if i < len(st.PhaseList)-1 {
+			arrowStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+			parts = append(parts, arrowStyle.Render(" → "))
+		}
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Center, parts...)
+}
+
+// isPhaseCompleted checks if a phase is completed
+func (st *SummaryTab) isPhaseCompleted(phase string) bool {
+	for _, p := range st.CompletedPhases {
+		if p == phase {
+			return true
+		}
+	}
+	return false
 }
 
 // successView shows the success dashboard
@@ -331,7 +545,7 @@ func (st *SummaryTab) failedView(styles Styles) string {
 	// Hint to check Issues tab
 	hintStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle)
-	hint := hintStyle.Render("Press 2 to view Issues tab for details")
+	hint := hintStyle.Render("Press 3 to view Issues tab for details")
 	sections = append(sections, hint)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, sections...)

@@ -481,20 +481,23 @@ func (it *IssuesTab) getByType(issueType IssueType) []Issue {
 // emptyView renders the empty state
 func (it *IssuesTab) emptyView(styles Styles) string {
 	icons := styles.Icons
-	emptyStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextSubtle).
-		Align(lipgloss.Center)
 
-	icon := lipgloss.NewStyle().
+	// Large icon (3x size effect)
+	iconStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.Success).
-		Render(icons.Success)
+		Bold(true).
+		Padding(1, 3)
+	bigIcon := iconStyle.Render(icons.Success + " " + icons.Success + " " + icons.Success)
 
-	msg := emptyStyle.Render("No issues found!")
+	msg := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextSubtle).
+		Render("No issues found!")
+
 	hint := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle).
 		Render("Build completed without errors or warnings")
 
-	content := lipgloss.JoinVertical(lipgloss.Center, "", icon, "", msg, "", hint)
+	content := lipgloss.JoinVertical(lipgloss.Center, "", bigIcon, "", msg, "", hint)
 
 	return lipgloss.Place(
 		it.Width,

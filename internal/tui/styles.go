@@ -49,6 +49,9 @@ func DefaultColors() Colors {
 
 // Icons holds all icon glyphs with fallback support
 type Icons struct {
+	// Brand icon
+	Bolt string
+
 	// Status icons
 	Success string
 	Error   string
@@ -134,6 +137,9 @@ type Icons struct {
 // NerdFontIcons returns icons using Nerd Font glyphs
 func NerdFontIcons() Icons {
 	return Icons{
+		// Brand
+		Bolt: "\uf0e7", //  (nf-fa-bolt)
+
 		// Status
 		Success: "\uf00c", //  (nf-fa-check)
 		Error:   "\uf00d", //  (nf-fa-times)
@@ -180,9 +186,9 @@ func NerdFontIcons() Icons {
 		Copy:    "\uf0c5", //  (nf-fa-copy)
 
 		// Tab icons
-		TabStream:  "\uf1de", //  (nf-fa-sliders)
-		TabIssues:  "\uf188", //  (nf-fa-bug)
-		TabSummary: "\uf46d", //  (nf-oct-graph)
+		TabStream:  "\uf120", //  (terminal)
+		TabIssues:  "\uf071", //  (warning)
+		TabSummary: "\uf0e4", //  (dashboard)
 
 		// Status bar icons
 		Project:   "\uf07b", //  (nf-fa-folder)
@@ -220,6 +226,9 @@ func NerdFontIcons() Icons {
 // UnicodeIcons returns icons using standard Unicode (fallback)
 func UnicodeIcons() Icons {
 	return Icons{
+		// Brand
+		Bolt: "⚡",
+
 		// Status
 		Success: "✓",
 		Error:   "✗",
