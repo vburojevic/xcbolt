@@ -47,6 +47,20 @@ type keyMap struct {
 	Init    key.Binding
 	Refresh key.Binding
 
+	// Tab navigation (new tab-based log view)
+	Tab1    key.Binding // Stream tab
+	Tab2    key.Binding // Issues tab
+	Tab3    key.Binding // Summary tab
+	TabNext key.Binding // Cycle to next tab
+
+	// Copy
+	CopyLine    key.Binding // Copy current line
+	CopyVisible key.Binding // Copy all visible content
+
+	// Display toggles
+	ToggleLineNumbers key.Binding
+	ToggleTimestamps  key.Binding
+
 	// Search & Navigation
 	Search           key.Binding
 	NextError        key.Binding
@@ -59,7 +73,7 @@ type keyMap struct {
 	CollapseAll      key.Binding
 	ToggleErrorsOnly key.Binding
 
-	// Viewport/Scroll (arrow keys only, no vim keys)
+	// Viewport/Scroll (arrow keys + vim keys)
 	ScrollUp     key.Binding
 	ScrollDown   key.Binding
 	ScrollTop    key.Binding
@@ -143,6 +157,44 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("^R", "refresh"),
 		),
 
+		// Tab navigation
+		Tab1: key.NewBinding(
+			key.WithKeys("1"),
+			key.WithHelp("1", "stream tab"),
+		),
+		Tab2: key.NewBinding(
+			key.WithKeys("2"),
+			key.WithHelp("2", "issues tab"),
+		),
+		Tab3: key.NewBinding(
+			key.WithKeys("3"),
+			key.WithHelp("3", "summary tab"),
+		),
+		TabNext: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "next tab"),
+		),
+
+		// Copy
+		CopyLine: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "copy line"),
+		),
+		CopyVisible: key.NewBinding(
+			key.WithKeys("Y"),
+			key.WithHelp("Y", "copy visible"),
+		),
+
+		// Display toggles
+		ToggleLineNumbers: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("L", "toggle line numbers"),
+		),
+		ToggleTimestamps: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "toggle timestamps"),
+		),
+
 		// Search & Navigation
 		Search: key.NewBinding(
 			key.WithKeys("/"),
@@ -185,22 +237,22 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("F", "toggle errors-only"),
 		),
 
-		// Viewport/Scroll - arrow keys only (no vim j/k)
+		// Viewport/Scroll - vim keys + arrow keys
 		ScrollUp: key.NewBinding(
-			key.WithKeys("up"),
-			key.WithHelp("↑", "scroll up"),
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "scroll up"),
 		),
 		ScrollDown: key.NewBinding(
-			key.WithKeys("down"),
-			key.WithHelp("↓", "scroll down"),
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "scroll down"),
 		),
 		ScrollTop: key.NewBinding(
-			key.WithKeys("home"),
-			key.WithHelp("home", "top"),
+			key.WithKeys("home", "g"),
+			key.WithHelp("home/g", "top"),
 		),
 		ScrollBottom: key.NewBinding(
-			key.WithKeys("end"),
-			key.WithHelp("end", "bottom"),
+			key.WithKeys("end", "G"),
+			key.WithHelp("end/G", "bottom"),
 		),
 		PageUp: key.NewBinding(
 			key.WithKeys("pgup"),
@@ -258,12 +310,14 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		{k.Build, k.Run, k.Test, k.Clean, k.Stop},
 		// Configuration
 		{k.Scheme, k.Destination, k.Palette, k.Init, k.Refresh},
+		// Tabs
+		{k.Tab1, k.Tab2, k.Tab3, k.TabNext},
 		// View controls
-		{k.ToggleRawView, k.ToggleCollapse, k.ExpandAll, k.CollapseAll, k.ToggleErrorsOnly},
+		{k.ToggleRawView, k.ToggleLineNumbers, k.ToggleTimestamps, k.ToggleErrorsOnly},
 		// Scrolling
 		{k.ScrollUp, k.ScrollDown, k.PageUp, k.PageDown, k.ScrollTop, k.ScrollBottom},
 		// Navigation & Other
-		{k.Search, k.NextError, k.PrevError, k.OpenXcode, k.OpenEditor, k.Help, k.Quit},
+		{k.Search, k.NextError, k.PrevError, k.CopyLine, k.CopyVisible, k.OpenXcode, k.Help, k.Quit},
 	}
 }
 
@@ -286,5 +340,5 @@ func (k keyMap) ActionHints() []struct {
 
 // FooterHints returns the hints for the footer bar
 func (k keyMap) FooterHints() string {
-	return "b:build  r:run  t:test  s:scheme  d:dest  ^K:palette  ?:help"
+	return "b:build  r:run  t:test  1-3:tabs  /:search  ?:help"
 }

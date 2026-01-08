@@ -23,6 +23,10 @@ type Layout struct {
 	ShowProgressBar bool
 	ShowHintsBar    bool
 
+	// Tab bar settings
+	TabBarHeight int
+	ShowTabBar   bool
+
 	// Minimal mode for small terminals
 	MinimalMode bool
 }
@@ -33,8 +37,10 @@ func NewLayout() Layout {
 		StatusBarHeight: 2, // 1 line content + 1 line border
 		ProgressHeight:  1,
 		HintsBarHeight:  2, // 1 line content + 1 line border
+		TabBarHeight:    2, // 2 lines for tab bar
 		ShowProgressBar: false,
 		ShowHintsBar:    true,
+		ShowTabBar:      true,
 	}
 }
 
@@ -57,6 +63,7 @@ func (l Layout) ContentWidth() int {
 }
 
 // ContentHeight returns the height available for the content pane
+// Note: TabView handles its own tab bar height internally, so we don't subtract it here
 func (l Layout) ContentHeight() int {
 	if l.MinimalMode {
 		// In minimal mode: 1 line status, rest for content

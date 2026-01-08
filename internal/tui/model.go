@@ -123,19 +123,22 @@ type Model struct {
 	hintsBar    HintsBar
 
 	// Components
-	spinner    spinner.Model
-	viewport   viewport.Model
-	wizard     wizardModel
-	selector   SelectorModel
-	palette    PaletteModel
-	streamView StreamView
+	spinner  spinner.Model
+	viewport viewport.Model
+	wizard   wizardModel
+	selector SelectorModel
+	palette  PaletteModel
+
+	// Tab-based log view (replaces phaseView and streamView)
+	tabView *TabView
+
+	// Legacy views (kept for gradual migration)
+	streamView  StreamView
+	phaseView   PhaseView
+	logViewMode LogViewMode
 
 	// Status message (shown in results bar)
 	statusMsg string
-
-	// Logs - grouped phase view with collapsible sections
-	phaseView   PhaseView
-	logViewMode LogViewMode
 
 	// Search state
 	searchInput   textinput.Model
@@ -203,6 +206,7 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		help:        h,
 		spinner:     sp,
 		viewport:    vp,
+		tabView:     NewTabView(),
 		phaseView:   NewPhaseView(),
 		streamView:  NewStreamView(),
 		searchInput: si,
@@ -546,7 +550,9 @@ func (m *Model) updateViewportSize() {
 	// Use new layout calculations
 	m.viewport.Width = maxInt(0, m.layout.ContentWidth()-2)
 	m.viewport.Height = maxInt(0, m.layout.ContentHeight()-2)
-	// Update PhaseView dimensions
+	// Update TabView dimensions (includes tab bar height internally)
+	m.tabView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
+	// Update legacy views
 	m.phaseView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
 	m.streamView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
 }
@@ -590,9 +596,9 @@ func (m *Model) syncStatusBarState() {
 	m.statusBar.Stage = m.currentStage
 	m.statusBar.Progress = m.stageProgress
 
-	// Error/warning counts from PhaseView
-	m.statusBar.ErrorCount = m.phaseView.ErrorCount()
-	m.statusBar.WarningCount = m.phaseView.WarningCount()
+	// Error/warning counts from TabView
+	m.statusBar.ErrorCount = m.tabView.Counts.ErrorCount
+	m.statusBar.WarningCount = m.tabView.Counts.WarningCount
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
@@ -714,6 +720,49 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		m.setStatus("Refreshing…")
 		return loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride)
 
+	// Tab navigation
+	case keyMatches(msg, m.keys.Tab1):
+		m.tabView.SetActiveTab(TabStream)
+		m.setStatus("Stream")
+
+	case keyMatches(msg, m.keys.Tab2):
+		m.tabView.SetActiveTab(TabIssues)
+		m.setStatus("Issues")
+
+	case keyMatches(msg, m.keys.Tab3):
+		m.tabView.SetActiveTab(TabSummary)
+		m.setStatus("Summary")
+
+	case keyMatches(msg, m.keys.TabNext):
+		if !m.runMode.Active { // Don't conflict with SwitchPane in run mode
+			m.tabView.NextTab()
+			m.setStatus(m.tabView.ActiveTab.String())
+		}
+
+	// Display toggles
+	case keyMatches(msg, m.keys.ToggleLineNumbers):
+		m.tabView.StreamTab.ShowLineNumbers = !m.tabView.StreamTab.ShowLineNumbers
+		if m.tabView.StreamTab.ShowLineNumbers {
+			m.setStatus("Line numbers on")
+		} else {
+			m.setStatus("Line numbers off")
+		}
+
+	case keyMatches(msg, m.keys.ToggleTimestamps):
+		m.tabView.StreamTab.ShowTimestamps = !m.tabView.StreamTab.ShowTimestamps
+		if m.tabView.StreamTab.ShowTimestamps {
+			m.setStatus("Timestamps on")
+		} else {
+			m.setStatus("Timestamps off")
+		}
+
+	// Copy functionality
+	case keyMatches(msg, m.keys.CopyLine):
+		return m.copyCurrentLine()
+
+	case keyMatches(msg, m.keys.CopyVisible):
+		return m.copyVisibleContent()
+
 	case keyMatches(msg, m.keys.ToggleAutoFollow), keyMatches(msg, m.keys.ToggleRawView):
 		m.toggleLogView()
 
@@ -728,32 +777,26 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 			m.setStatus("All logs")
 		}
 
-	// Scrolling - route to correct pane in run mode
+	// Scrolling - route to TabView or console pane
 	case keyMatches(msg, m.keys.ScrollUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(-1)
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.ScrollUp(1)
 		} else {
-			m.phaseView.ScrollUp(1)
+			m.tabView.ScrollUp(1)
 		}
 
 	case keyMatches(msg, m.keys.ScrollDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(1)
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.ScrollDown(1)
 		} else {
-			m.phaseView.ScrollDown(1)
+			m.tabView.ScrollDown(1)
 		}
 
 	case keyMatches(msg, m.keys.ScrollTop):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.runMode.ConsolePos = 0
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.GotoTop()
 		} else {
-			m.phaseView.GotoTop()
+			m.tabView.GotoTop()
 		}
 
 	case keyMatches(msg, m.keys.ScrollBottom):
@@ -763,46 +806,36 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 				maxPos = 0
 			}
 			m.runMode.ConsolePos = maxPos
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.GotoBottom()
 		} else {
-			m.phaseView.GotoBottom()
+			m.tabView.GotoBottom()
 		}
 
 	case keyMatches(msg, m.keys.PageUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(-m.layout.SplitBottomHeight())
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.ScrollUp(m.streamView.VisibleRows)
 		} else {
-			m.phaseView.ScrollUp(m.phaseView.VisibleRows)
+			m.tabView.ScrollUp(10)
 		}
 
 	case keyMatches(msg, m.keys.PageDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(m.layout.SplitBottomHeight())
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.ScrollDown(m.streamView.VisibleRows)
 		} else {
-			m.phaseView.ScrollDown(m.phaseView.VisibleRows)
+			m.tabView.ScrollDown(10)
 		}
 
 	case keyMatches(msg, m.keys.HalfPageUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(-m.layout.SplitBottomHeight() / 2)
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.ScrollUp(m.streamView.VisibleRows / 2)
 		} else {
-			m.phaseView.ScrollUp(m.phaseView.VisibleRows / 2)
+			m.tabView.ScrollUp(5)
 		}
 
 	case keyMatches(msg, m.keys.HalfPageDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(m.layout.SplitBottomHeight() / 2)
-		} else if m.logViewMode == LogViewStream {
-			m.streamView.ScrollDown(m.streamView.VisibleRows / 2)
 		} else {
-			m.phaseView.ScrollDown(m.phaseView.VisibleRows / 2)
+			m.tabView.ScrollDown(5)
 		}
 
 	// Run mode pane switching
@@ -1067,7 +1100,17 @@ func (m *Model) saveRecentCombo() {
 func (m *Model) handleEvent(ev core.Event) {
 	line := m.formatEventLine(ev)
 
-	// Stream view always tracks raw or pretty output.
+	// Route to TabView (new tab-based system)
+	switch {
+	case ev.Type == "log_raw":
+		m.tabView.AddRawLine(ev.Msg)
+	case ev.Type == "log":
+		m.tabView.AddRawLine(ev.Msg)
+	default:
+		m.tabView.AddRawLine(line)
+	}
+
+	// Stream view always tracks raw or pretty output (legacy).
 	switch {
 	case ev.Type == "log_raw":
 		m.streamView.AddRawLine(ev.Msg)
@@ -1079,7 +1122,7 @@ func (m *Model) handleEvent(ev core.Event) {
 		m.streamView.AddRawLine(line)
 	}
 
-	// Phase view should use raw output for structure and ignore pretty lines.
+	// Phase view should use raw output for structure and ignore pretty lines (legacy).
 	appendPhase := false
 	phaseLine := line
 	switch {
@@ -1285,6 +1328,7 @@ func (m *Model) startOp(name string) tea.Cmd {
 	}
 
 	// Clear logs for new operation
+	m.tabView.Clear()
 	m.phaseView.Clear()
 	m.streamView.Clear()
 
@@ -1606,17 +1650,11 @@ func (m Model) searchBarView() string {
 
 // contentView renders the main content area (logs)
 func (m Model) contentView() string {
-	if m.logViewMode == LogViewStream {
-		if !m.streamView.HasLines() {
-			return m.emptyStateView()
-		}
-		return m.streamView.View()
-	}
-	if len(m.phaseView.FlatLines) == 0 {
+	// Use new TabView system
+	if m.tabView.Counts.StreamLines == 0 {
 		return m.emptyStateView()
 	}
-	m.phaseView.RenderMode = PhaseRenderCards
-	return m.phaseView.View(m.styles)
+	return m.tabView.View(m.styles)
 }
 
 // consoleView renders the console output pane for run mode
@@ -1772,7 +1810,7 @@ func (m Model) helpOverlayView() string {
 	b.WriteString("\n\n")
 
 	groups := m.keys.FullHelp()
-	groupNames := []string{"ACTIONS", "CONFIGURATION", "LAYOUT", "SCROLLING", "OTHER"}
+	groupNames := []string{"ACTIONS", "CONFIGURATION", "TABS", "VIEW", "SCROLLING", "NAVIGATION"}
 
 	sectionStyle := lipgloss.NewStyle().
 		Foreground(s.Colors.TextSubtle).
@@ -1864,6 +1902,73 @@ func getGitBranch(projectRoot string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// =============================================================================
+// Copy Functions
+// =============================================================================
+
+// copyCurrentLine copies the current line from the active tab to clipboard
+func (m *Model) copyCurrentLine() tea.Cmd {
+	var content string
+
+	switch m.tabView.ActiveTab {
+	case TabStream:
+		content = m.tabView.StreamTab.GetCurrentLine()
+	case TabIssues:
+		if issue := m.tabView.IssuesTab.GetSelectedIssue(); issue != nil {
+			content = issue.FullText
+		}
+	case TabSummary:
+		content = "" // Summary tab doesn't have line-by-line content
+	}
+
+	if content == "" {
+		return func() tea.Msg {
+			return statusMsg("Nothing to copy")
+		}
+	}
+
+	return m.copyToClipboard(content, "Copied line")
+}
+
+// copyVisibleContent copies all visible content from the active tab to clipboard
+func (m *Model) copyVisibleContent() tea.Cmd {
+	var content string
+
+	switch m.tabView.ActiveTab {
+	case TabStream:
+		content = m.tabView.StreamTab.GetVisibleContent()
+	case TabIssues:
+		// Copy all visible issues
+		var lines []string
+		for _, issue := range m.tabView.IssuesTab.Issues {
+			lines = append(lines, issue.FullText)
+		}
+		content = strings.Join(lines, "\n")
+	case TabSummary:
+		content = "" // Summary tab doesn't have copyable content
+	}
+
+	if content == "" {
+		return func() tea.Msg {
+			return statusMsg("Nothing to copy")
+		}
+	}
+
+	return m.copyToClipboard(content, "Copied visible content")
+}
+
+// copyToClipboard copies content to system clipboard using pbcopy (macOS)
+func (m *Model) copyToClipboard(content, successMsg string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("pbcopy")
+		cmd.Stdin = strings.NewReader(content)
+		if err := cmd.Run(); err != nil {
+			return statusMsg("Copy failed: " + err.Error())
+		}
+		return statusMsg(successMsg)
+	}
 }
 
 // =============================================================================

@@ -38,33 +38,9 @@ type Colors struct {
 	BorderMuted lipgloss.AdaptiveColor
 }
 
-// DefaultColors returns the monochrome + blue accent color palette
+// DefaultColors returns the pastel color palette (auto dark/light)
 func DefaultColors() Colors {
-	return Colors{
-		// Blue accent - primary interactive color
-		Accent:      lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#3B82F6"},
-		AccentMuted: lipgloss.AdaptiveColor{Light: "#3B82F6", Dark: "#1D4ED8"},
-
-		// Semantic colors - muted, professional tones
-		Success: lipgloss.AdaptiveColor{Light: "#059669", Dark: "#10B981"}, // Emerald
-		Warning: lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"}, // Amber
-		Error:   lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#EF4444"}, // Red
-		Running: lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#3B82F6"}, // Same as accent
-
-		// Backgrounds - clean monochrome
-		Background: lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#111827"}, // White / Gray-900
-		Surface:    lipgloss.AdaptiveColor{Light: "#F9FAFB", Dark: "#1F2937"}, // Gray-50 / Gray-800
-		Overlay:    lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#374151"}, // Gray-100 / Gray-700
-
-		// Text - clear hierarchy
-		Text:       lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F9FAFB"}, // Gray-900 / Gray-50
-		TextMuted:  lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"}, // Gray-500 / Gray-400
-		TextSubtle: lipgloss.AdaptiveColor{Light: "#9CA3AF", Dark: "#6B7280"}, // Gray-400 / Gray-500
-
-		// Borders - subtle
-		Border:      lipgloss.AdaptiveColor{Light: "#E5E7EB", Dark: "#374151"}, // Gray-200 / Gray-700
-		BorderMuted: lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#1F2937"}, // Gray-100 / Gray-800
-	}
+	return PastelColors()
 }
 
 // =============================================================================
@@ -117,6 +93,42 @@ type Icons struct {
 	Link    string
 	Sign    string
 	Copy    string
+
+	// Tab icons (NEW)
+	TabStream  string
+	TabIssues  string
+	TabSummary string
+
+	// Status bar icons (NEW)
+	Project   string
+	Scheme    string
+	Device    string
+	Simulator string
+	Clock     string
+
+	// Build phase icons (NEW)
+	Swift   string
+	Process string
+	Script  string
+	Package string
+
+	// Action icons (NEW)
+	Expand   string
+	Collapse string
+	Export   string
+	Filter   string
+	Clear    string
+	Xcode    string
+	Editor   string
+	Quit     string
+
+	// Log line icons (NEW)
+	File      string
+	SwiftFile string
+	ObjCFile  string
+	LineNum   string
+	Info      string
+	Note      string
 }
 
 // NerdFontIcons returns icons using Nerd Font glyphs
@@ -166,6 +178,42 @@ func NerdFontIcons() Icons {
 		Link:    "\uf0c1", //  (nf-fa-link)
 		Sign:    "\uf023", //  (nf-fa-lock)
 		Copy:    "\uf0c5", //  (nf-fa-copy)
+
+		// Tab icons
+		TabStream:  "\uf1de", //  (nf-fa-sliders)
+		TabIssues:  "\uf188", //  (nf-fa-bug)
+		TabSummary: "\uf46d", //  (nf-oct-graph)
+
+		// Status bar icons
+		Project:   "\uf07b", //  (nf-fa-folder)
+		Scheme:    "\uf013", //  (nf-fa-cog)
+		Device:    "\uf10a", //  (nf-fa-mobile)
+		Simulator: "\uf3fa", //  (nf-fa-mobile_alt)
+		Clock:     "\uf017", //  (nf-fa-clock)
+
+		// Build phase icons
+		Swift:   "\ue755", //  (nf-seti-swift)
+		Process: "\uf085", //  (nf-fa-gears)
+		Script:  "\uf489", //  (nf-oct-terminal)
+		Package: "\uf1c6", //  (nf-fa-file_archive)
+
+		// Action icons
+		Expand:   "\uf065", //  (nf-fa-expand)
+		Collapse: "\uf066", //  (nf-fa-compress)
+		Export:   "\uf56e", //  (nf-fa-file_export)
+		Filter:   "\uf0b0", //  (nf-fa-filter)
+		Clear:    "\uf1f8", //  (nf-fa-trash)
+		Xcode:    "\ue711", //  (nf-dev-apple)
+		Editor:   "\ue7c5", //  (nf-dev-vim)
+		Quit:     "\uf011", //  (nf-fa-power_off)
+
+		// Log line icons
+		File:      "\uf15b", //  (nf-fa-file)
+		SwiftFile: "\ue755", //  (nf-seti-swift)
+		ObjCFile:  "\ue61e", //  (nf-seti-c)
+		LineNum:   "\uf292", //  (nf-fa-hashtag)
+		Info:      "\uf05a", //  (nf-fa-info_circle)
+		Note:      "\uf249", //  (nf-fa-sticky_note)
 	}
 }
 
@@ -216,6 +264,42 @@ func UnicodeIcons() Icons {
 		Link:    "⛓",
 		Sign:    "🔒",
 		Copy:    "⧉",
+
+		// Tab icons
+		TabStream:  "≡",
+		TabIssues:  "!",
+		TabSummary: "◈",
+
+		// Status bar icons
+		Project:   "◫",
+		Scheme:    "⚙",
+		Device:    "◧",
+		Simulator: "◧",
+		Clock:     "◔",
+
+		// Build phase icons
+		Swift:   "◇",
+		Process: "⚙",
+		Script:  "▷",
+		Package: "◫",
+
+		// Action icons
+		Expand:   "⊞",
+		Collapse: "⊟",
+		Export:   "↧",
+		Filter:   "◇",
+		Clear:    "⌫",
+		Xcode:    "◈",
+		Editor:   "◪",
+		Quit:     "◉",
+
+		// Log line icons
+		File:      "◫",
+		SwiftFile: "◇",
+		ObjCFile:  "◆",
+		LineNum:   "#",
+		Info:      "ℹ",
+		Note:      "◫",
 	}
 }
 
@@ -278,6 +362,8 @@ type Styles struct {
 	Selector  SelectorStyles
 	Help      HelpStyles
 	Search    SearchStyles
+	TabBar    TabBarStyles
+	Syntax    SyntaxColors
 }
 
 // StatusBarStyles for the top status bar
@@ -376,6 +462,21 @@ type SearchStyles struct {
 	NoMatch     lipgloss.Style
 }
 
+// TabBarStyles for the tab navigation bar
+type TabBarStyles struct {
+	Container     lipgloss.Style
+	Tab           lipgloss.Style
+	TabActive     lipgloss.Style
+	TabInactive   lipgloss.Style
+	TabIcon       lipgloss.Style
+	TabLabel      lipgloss.Style
+	TabSubtitle   lipgloss.Style
+	TabBadge      lipgloss.Style
+	TabBadgeError lipgloss.Style
+	TabBadgeWarn  lipgloss.Style
+	Separator     lipgloss.Style
+}
+
 // DefaultStyles returns the complete style configuration
 func DefaultStyles() Styles {
 	colors := DefaultColors()
@@ -392,6 +493,8 @@ func DefaultStyles() Styles {
 		Selector:  defaultSelectorStyles(colors),
 		Help:      defaultHelpStyles(colors),
 		Search:    defaultSearchStyles(colors),
+		TabBar:    defaultTabBarStyles(colors),
+		Syntax:    DefaultSyntaxColors(),
 	}
 }
 
@@ -640,6 +743,53 @@ func defaultSearchStyles(c Colors) SearchStyles {
 
 		NoMatch: lipgloss.NewStyle().
 			Foreground(c.Error),
+	}
+}
+
+func defaultTabBarStyles(c Colors) TabBarStyles {
+	return TabBarStyles{
+		Container: lipgloss.NewStyle().
+			Padding(0, 1).
+			BorderStyle(lipgloss.Border{Bottom: "─"}).
+			BorderForeground(c.Border).
+			BorderBottom(true),
+
+		Tab: lipgloss.NewStyle().
+			Padding(0, 2),
+
+		TabActive: lipgloss.NewStyle().
+			Foreground(c.Accent).
+			Bold(true).
+			Padding(0, 2),
+
+		TabInactive: lipgloss.NewStyle().
+			Foreground(c.TextMuted).
+			Padding(0, 2),
+
+		TabIcon: lipgloss.NewStyle().
+			Foreground(c.Accent).
+			MarginRight(1),
+
+		TabLabel: lipgloss.NewStyle().
+			Foreground(c.Text),
+
+		TabSubtitle: lipgloss.NewStyle().
+			Foreground(c.TextSubtle),
+
+		TabBadge: lipgloss.NewStyle().
+			Foreground(c.TextMuted),
+
+		TabBadgeError: lipgloss.NewStyle().
+			Foreground(c.Error).
+			Bold(true),
+
+		TabBadgeWarn: lipgloss.NewStyle().
+			Foreground(c.Warning),
+
+		Separator: lipgloss.NewStyle().
+			Foreground(c.Border).
+			SetString("│").
+			Padding(0, 1),
 	}
 }
 
