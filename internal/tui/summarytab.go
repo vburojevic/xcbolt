@@ -240,8 +240,8 @@ func (st *SummaryTab) GotoBottom() {
 
 // renderCard draws a bordered card with title
 func (st *SummaryTab) renderCard(title string, content []string, width int, styles Styles) string {
-	if width < 10 {
-		width = 40
+	if width < 20 {
+		width = 60
 	}
 	innerWidth := width - 4 // Account for borders and padding
 
@@ -250,27 +250,26 @@ func (st *SummaryTab) renderCard(title string, content []string, width int, styl
 	borderStyle := lipgloss.NewStyle().Foreground(styles.Colors.Border)
 
 	titleText := titleStyle.Render(title)
-	titleLen := len(title)
-	dashesAfter := innerWidth - titleLen - 1
+	// Use lipgloss.Width for visual width (excludes ANSI codes)
+	titleVisualLen := lipgloss.Width(title)
+	dashesAfter := innerWidth - titleVisualLen - 1
 	if dashesAfter < 0 {
 		dashesAfter = 0
 	}
 
 	topLine := borderStyle.Render("┌─ ") +
 		titleText +
-		borderStyle.Render(" " + strings.Repeat("─", dashesAfter) + "┐")
+		borderStyle.Render(" "+strings.Repeat("─", dashesAfter)+"┐")
 
 	// Content lines: │ content                    │
 	var lines []string
 	lines = append(lines, topLine)
 
 	for _, line := range content {
-		// Truncate if too long
-		if len(line) > innerWidth {
-			line = line[:innerWidth-3] + "..."
-		}
-		// Pad to fill width
-		padding := innerWidth - len(line)
+		// Use lipgloss.Width for visual width (excludes ANSI codes)
+		visualWidth := lipgloss.Width(line)
+		// Don't truncate - just pad to fill width
+		padding := innerWidth - visualWidth
 		if padding < 0 {
 			padding = 0
 		}
@@ -311,11 +310,11 @@ func (st *SummaryTab) View(styles Styles) string {
 // idleView shows project info, system status, last build, and quick actions
 func (st *SummaryTab) idleView(styles Styles) string {
 	cardWidth := st.Width - 8
-	if cardWidth > 50 {
-		cardWidth = 50
+	if cardWidth > 70 {
+		cardWidth = 70
 	}
-	if cardWidth < 30 {
-		cardWidth = 30
+	if cardWidth < 40 {
+		cardWidth = 40
 	}
 
 	var cards []string
@@ -422,11 +421,11 @@ func (st *SummaryTab) idleView(styles Styles) string {
 // buildingView shows live build progress with spinner
 func (st *SummaryTab) buildingView(styles Styles) string {
 	cardWidth := st.Width - 8
-	if cardWidth > 50 {
-		cardWidth = 50
+	if cardWidth > 70 {
+		cardWidth = 70
 	}
-	if cardWidth < 30 {
-		cardWidth = 30
+	if cardWidth < 40 {
+		cardWidth = 40
 	}
 
 	var cards []string
@@ -521,11 +520,11 @@ func (st *SummaryTab) renderDotProgress(width int, styles Styles) string {
 // successView shows build success
 func (st *SummaryTab) successView(styles Styles) string {
 	cardWidth := st.Width - 8
-	if cardWidth > 50 {
-		cardWidth = 50
+	if cardWidth > 70 {
+		cardWidth = 70
 	}
-	if cardWidth < 30 {
-		cardWidth = 30
+	if cardWidth < 40 {
+		cardWidth = 40
 	}
 
 	var cards []string
@@ -549,13 +548,19 @@ func (st *SummaryTab) successView(styles Styles) string {
 	// Summary Card
 	summaryContent := []string{}
 	var parts []string
-	errStyle := lipgloss.NewStyle().Foreground(styles.Colors.Text)
-	parts = append(parts, errStyle.Render(fmt.Sprintf("%d errors", st.ErrorCount)))
+	if st.ErrorCount > 0 {
+		errStyle := lipgloss.NewStyle().Foreground(styles.Colors.Error)
+		parts = append(parts, errStyle.Render(fmt.Sprintf("%s %d errors", styles.Icons.Error, st.ErrorCount)))
+	} else {
+		textStyle := lipgloss.NewStyle().Foreground(styles.Colors.Success)
+		parts = append(parts, textStyle.Render(fmt.Sprintf("%s 0 errors", styles.Icons.Success)))
+	}
 	if st.WarningCount > 0 {
 		warnStyle := lipgloss.NewStyle().Foreground(styles.Colors.Warning)
-		parts = append(parts, warnStyle.Render(fmt.Sprintf("%d warnings", st.WarningCount)))
+		parts = append(parts, warnStyle.Render(fmt.Sprintf("%s %d warnings", styles.Icons.Warning, st.WarningCount)))
 	} else {
-		parts = append(parts, errStyle.Render(fmt.Sprintf("%d warnings", st.WarningCount)))
+		textStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		parts = append(parts, textStyle.Render("0 warnings"))
 	}
 	summaryContent = append(summaryContent, strings.Join(parts, "   "))
 	cards = append(cards, st.renderCard("Summary", summaryContent, cardWidth, styles))
@@ -592,11 +597,11 @@ func (st *SummaryTab) successView(styles Styles) string {
 // failedView shows build failure
 func (st *SummaryTab) failedView(styles Styles) string {
 	cardWidth := st.Width - 8
-	if cardWidth > 50 {
-		cardWidth = 50
+	if cardWidth > 70 {
+		cardWidth = 70
 	}
-	if cardWidth < 30 {
-		cardWidth = 30
+	if cardWidth < 40 {
+		cardWidth = 40
 	}
 
 	var cards []string

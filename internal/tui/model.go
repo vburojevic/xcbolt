@@ -583,14 +583,17 @@ func (m *Model) toggleLogView() {
 // syncStatusBarState syncs the status bar display with current model state
 func (m *Model) syncStatusBarState() {
 	// Project name from workspace or project
+	projectName := ""
 	if m.cfg.Workspace != "" {
-		m.statusBar.ProjectName = filepath.Base(m.cfg.Workspace)
+		projectName = filepath.Base(m.cfg.Workspace)
 		// Remove .xcworkspace extension
-		m.statusBar.ProjectName = strings.TrimSuffix(m.statusBar.ProjectName, ".xcworkspace")
+		projectName = strings.TrimSuffix(projectName, ".xcworkspace")
+		m.statusBar.ProjectName = projectName
 	} else if m.cfg.Project != "" {
-		m.statusBar.ProjectName = filepath.Base(m.cfg.Project)
+		projectName = filepath.Base(m.cfg.Project)
 		// Remove .xcodeproj extension
-		m.statusBar.ProjectName = strings.TrimSuffix(m.statusBar.ProjectName, ".xcodeproj")
+		projectName = strings.TrimSuffix(projectName, ".xcodeproj")
+		m.statusBar.ProjectName = projectName
 	}
 
 	m.statusBar.GitBranch = m.gitBranch
@@ -605,6 +608,32 @@ func (m *Model) syncStatusBarState() {
 	// Error/warning counts from TabView
 	m.statusBar.ErrorCount = m.tabView.Counts.ErrorCount
 	m.statusBar.WarningCount = m.tabView.Counts.WarningCount
+
+	// Sync project info to Dashboard
+	targetDevice := m.cfg.Destination.Name
+	if m.cfg.Destination.OS != "" {
+		targetDevice += " (" + m.cfg.Destination.OS + ")"
+	}
+	m.tabView.SummaryTab.SetProjectInfo(
+		projectName,
+		m.cfg.Scheme,
+		targetDevice,
+		m.cfg.Configuration,
+	)
+
+	// Sync system info to Dashboard
+	simulatorStatus := ""
+	for _, sim := range m.info.Simulators {
+		if sim.State == "Booted" {
+			simulatorStatus = "Booted"
+			break
+		}
+	}
+	if simulatorStatus == "" && len(m.info.Simulators) > 0 {
+		simulatorStatus = "Available"
+	}
+	deviceConnected := len(m.info.Devices) > 0
+	m.tabView.SummaryTab.SetSystemInfo("Xcode", simulatorStatus, deviceConnected)
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
