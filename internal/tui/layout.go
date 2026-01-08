@@ -108,6 +108,9 @@ func (l Layout) RenderHeader(content string, styles Styles) string {
 		content = "xcbolt"
 	}
 
+	// DEBUG: Prepend marker to verify header is rendered
+	content = ">>> " + content
+
 	if l.MinimalMode {
 		// Minimal mode: single line with explicit Height
 		style := lipgloss.NewStyle().
