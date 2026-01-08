@@ -1874,9 +1874,9 @@ func (m Model) helpOverlayView() string {
 
 func (m Model) wizardView() string {
 	s := m.styles
-	statusBarContent := m.statusBar.View(m.width, m.styles)
+	headerContent := m.statusBar.View(m.width, m.styles)
 	return lipgloss.JoinVertical(lipgloss.Left,
-		m.layout.RenderStatusBar(statusBarContent, m.styles),
+		m.layout.RenderHeader(headerContent, m.styles),
 		s.Popup.Container.Width(m.width-4).Render(m.wizard.View()),
 	)
 }

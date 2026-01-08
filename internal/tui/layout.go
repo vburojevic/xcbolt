@@ -101,30 +101,33 @@ func (l Layout) SplitBottomHeight() int {
 // Layout Rendering
 // =============================================================================
 
-// RenderStatusBar renders the full-width status bar at the top
-func (l Layout) RenderStatusBar(content string, styles Styles) string {
+// RenderHeader renders the full-width header at the top
+func (l Layout) RenderHeader(content string, styles Styles) string {
 	// Ensure we always have visible content
 	if content == "" {
 		content = "xcbolt"
 	}
 
 	if l.MinimalMode {
-		// Minimal mode: just content + newline
-		return content + "\n"
+		// Minimal mode: single line with explicit Height
+		style := lipgloss.NewStyle().
+			Width(l.Width).
+			Height(1).
+			Padding(0, 1)
+		return style.Render(content)
 	}
 
-	// Render content line with padding
-	contentStyle := lipgloss.NewStyle().
+	// Full mode: single style block with explicit Height (mirrors hints bar pattern)
+	// This ensures the element takes its designated space in JoinVertical
+	style := lipgloss.NewStyle().
 		Width(l.Width).
-		Padding(0, 1)
-	contentLine := contentStyle.Render(content)
+		Height(l.StatusBarHeight).
+		Padding(0, 1).
+		BorderStyle(lipgloss.Border{Bottom: "─"}).
+		BorderForeground(styles.Colors.Border).
+		BorderBottom(true)
 
-	// Render separator line manually (not using Border which has rendering issues)
-	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.Border)
-	separator := sepStyle.Render(strings.Repeat("─", l.Width))
-
-	// Return content + newline + separator (explicit structure, no Height dependency)
-	return contentLine + "\n" + separator
+	return style.Render(content)
 }
 
 // RenderProgressBar renders the progress bar below status bar
@@ -162,9 +165,9 @@ func (l Layout) RenderHintsBar(content string, styles Styles) string {
 // RenderFullLayout composes all layout elements
 func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar string, styles Styles) string {
 	if l.MinimalMode {
-		// Minimal mode: status bar + content only
+		// Minimal mode: header + content only
 		var parts []string
-		parts = append(parts, l.RenderStatusBar(statusBar, styles))
+		parts = append(parts, l.RenderHeader(statusBar, styles))
 
 		contentStyle := lipgloss.NewStyle().
 			Width(l.Width).
@@ -176,8 +179,8 @@ func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar strin
 
 	var parts []string
 
-	// Status bar at top
-	parts = append(parts, l.RenderStatusBar(statusBar, styles))
+	// Header at top
+	parts = append(parts, l.RenderHeader(statusBar, styles))
 
 	// Progress bar (if visible)
 	if l.ShowProgressBar && progressBar != "" {
@@ -207,8 +210,8 @@ func (l Layout) RenderSplitLayout(statusBar, progressBar, topContent, bottomCont
 
 	var parts []string
 
-	// Status bar at top
-	parts = append(parts, l.RenderStatusBar(statusBar, styles))
+	// Header at top
+	parts = append(parts, l.RenderHeader(statusBar, styles))
 
 	// Progress bar (if visible)
 	if l.ShowProgressBar && progressBar != "" {
