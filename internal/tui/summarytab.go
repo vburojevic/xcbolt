@@ -242,11 +242,6 @@ func (st *SummaryTab) pendingView(styles Styles) string {
 		Padding(1, 0)
 	bigBolt := boltStyle.Render(icons.Bolt)
 
-	titleStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Text).
-		Bold(true)
-	title := titleStyle.Render(icons.Bolt + " xcbolt")
-
 	msg := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle).
 		Render("No build results yet")
@@ -256,7 +251,7 @@ func (st *SummaryTab) pendingView(styles Styles) string {
 		Render("Press b to build, r to run, t to test")
 
 	content := lipgloss.JoinVertical(lipgloss.Center,
-		bigBolt, "", title, "", msg, "", hint,
+		bigBolt, "", msg, "", hint,
 	)
 
 	return lipgloss.Place(
