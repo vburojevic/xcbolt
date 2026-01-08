@@ -218,41 +218,35 @@ func (tv *TabView) View(styles Styles) string {
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content)
 }
 
-// renderTabBar renders the 2-line tab bar
-// NOTE: Background is pushed into each cell to prevent ANSI reset "holes"
+// renderTabBar renders the single-line tab bar
 func (tv *TabView) renderTabBar(styles Styles) string {
 	s := styles.TabBar
 	icons := styles.Icons
-	bgColor := styles.Colors.Surface
 
 	// Build each tab (order: Dashboard, Stream, Issues)
 	tabs := []struct {
-		tab      Tab
-		icon     string
-		label    string
-		subtitle string
-		badge    string
+		tab   Tab
+		icon  string
+		label string
+		badge string
 	}{
 		{
-			tab:      TabDashboard,
-			icon:     icons.TabSummary, // Dashboard icon
-			label:    "Dashboard",
-			subtitle: "Live stats",
-			badge:    "",
+			tab:   TabDashboard,
+			icon:  icons.TabSummary,
+			label: "Dashboard",
+			badge: "",
 		},
 		{
-			tab:      TabStream,
-			icon:     icons.TabStream,
-			label:    "Stream",
-			subtitle: "Live output",
-			badge:    "",
+			tab:   TabStream,
+			icon:  icons.TabStream,
+			label: "Stream",
+			badge: "",
 		},
 		{
-			tab:      TabIssues,
-			icon:     icons.TabIssues,
-			label:    "Issues",
-			subtitle: tv.issuesSubtitle(),
-			badge:    tv.issuesBadge(),
+			tab:   TabIssues,
+			icon:  icons.TabIssues,
+			label: "Issues",
+			badge: tv.issuesBadge(),
 		},
 	}
 
@@ -264,8 +258,7 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 	// Last tab gets remaining width to fill exactly
 	lastTabWidth := tv.Width - (tabWidth * 2)
 
-	var line1Parts []string
-	var line2Parts []string
+	var lineParts []string
 
 	for i, t := range tabs {
 		isActive := tv.ActiveTab == t.tab
@@ -274,59 +267,44 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 			cellWidth = lastTabWidth
 		}
 
-		// Base cell style with background - key fix for color consistency
+		// Base cell style (no background to match terminal)
 		cellBase := lipgloss.NewStyle().
-			Background(bgColor).
 			Width(cellWidth).
 			MaxWidth(cellWidth).
 			MaxHeight(1)
 
-		// Build line 1 content: [num] icon label (badge)
-		keyHint := lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextSubtle).Render(fmt.Sprintf("[%d]", i+1))
-
+		// Build content: icon label (badge)
 		var iconStr, labelStr string
 		if isActive {
-			iconStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.Accent).Render(t.icon)
-			labelStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.Accent).Bold(true).Render(t.label)
+			iconStr = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Render(t.icon)
+			labelStr = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true).Render(t.label)
 		} else {
-			iconStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextSubtle).Render(t.icon)
-			labelStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextMuted).Render(t.label)
+			iconStr = lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle).Render(t.icon)
+			labelStr = lipgloss.NewStyle().Foreground(styles.Colors.TextMuted).Render(t.label)
 		}
 
-		line1Content := " " + keyHint + " " + iconStr + " " + labelStr
+		lineContent := " " + iconStr + " " + labelStr
 		if t.badge != "" {
-			badgeStyle := s.TabBadge.Background(bgColor)
+			badgeStyle := s.TabBadge
 			if tv.Counts.ErrorCount > 0 && t.tab == TabIssues {
-				badgeStyle = s.TabBadgeError.Background(bgColor)
+				badgeStyle = s.TabBadgeError
 			}
-			line1Content += " " + badgeStyle.Render(t.badge)
+			lineContent += " " + badgeStyle.Render(t.badge)
 		}
 
-		// Build line 2 content: subtitle (indented)
-		var subtitleStr string
-		if isActive {
-			subtitleStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextMuted).Render(t.subtitle)
-		} else {
-			subtitleStr = lipgloss.NewStyle().Background(bgColor).Foreground(styles.Colors.TextSubtle).Render(t.subtitle)
-		}
-		line2Content := "     " + subtitleStr
-
-		// Render cells with background
-		line1Parts = append(line1Parts, cellBase.Render(line1Content))
-		line2Parts = append(line2Parts, cellBase.Render(line2Content))
+		// Render cell
+		lineParts = append(lineParts, cellBase.Render(lineContent))
 	}
 
-	line1 := lipgloss.JoinHorizontal(lipgloss.Top, line1Parts...)
-	line2 := lipgloss.JoinHorizontal(lipgloss.Top, line2Parts...)
+	line := lipgloss.JoinHorizontal(lipgloss.Top, lineParts...)
 
-	// Render border manually with background
+	// Render border
 	border := lipgloss.NewStyle().
-		Background(bgColor).
 		Foreground(styles.Colors.Border).
 		Width(tv.Width).
 		Render(strings.Repeat("─", tv.Width))
 
-	return lipgloss.JoinVertical(lipgloss.Left, line1, line2, border)
+	return lipgloss.JoinVertical(lipgloss.Left, line, border)
 }
 
 // issuesSubtitle returns the subtitle for the Issues tab

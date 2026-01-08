@@ -760,7 +760,6 @@ func defaultTabBarStyles(c Colors) TabBarStyles {
 	return TabBarStyles{
 		Container: lipgloss.NewStyle().
 			Padding(0, 1).
-			Background(c.Surface).
 			BorderStyle(lipgloss.Border{Bottom: "─"}).
 			BorderForeground(c.Border).
 			BorderBottom(true),

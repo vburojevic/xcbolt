@@ -235,12 +235,12 @@ func (st *SummaryTab) View(styles Styles) string {
 func (st *SummaryTab) pendingView(styles Styles) string {
 	icons := styles.Icons
 
-	// Large bolt icon (5x)
+	// Large bolt icon
 	boltStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.Accent).
 		Bold(true).
 		Padding(1, 0)
-	bigBolt := boltStyle.Render(icons.Bolt + "  " + icons.Bolt + "  " + icons.Bolt + "  " + icons.Bolt + "  " + icons.Bolt)
+	bigBolt := boltStyle.Render(icons.Bolt)
 
 	titleStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.Text).
@@ -288,15 +288,12 @@ func (st *SummaryTab) runningView(styles Styles) string {
 		Foreground(styles.Colors.TextMuted)
 	timer := timerStyle.Render("⏱ " + st.ElapsedTime())
 
-	header := lipgloss.JoinHorizontal(lipgloss.Center,
-		buildingIcon, " ", buildingText, "              ", timer)
+	header := buildingIcon + " " + buildingText + "    " + timer
 	sections = append(sections, "", header, "")
 
 	// === PROGRESS BAR: File Counter ===
-	if st.FilesTotal > 0 {
-		progressBar := st.renderProgressBar(styles)
-		sections = append(sections, progressBar, "")
-	}
+	progressBar := st.renderProgressBar(styles)
+	sections = append(sections, progressBar, "")
 
 	// === PHASE CARDS: Timeline of phases ===
 	if len(st.PhaseList) > 0 {
@@ -304,14 +301,21 @@ func (st *SummaryTab) runningView(styles Styles) string {
 		sections = append(sections, phaseCards, "")
 	}
 
-	// === CURRENT FILE ===
-	if st.CurrentFile != "" {
+	// === CURRENT FILE (always render to prevent jumping) ===
+	{
+		phase := st.CurrentPhase
+		if phase == "" {
+			phase = "Processing"
+		}
 		fileLabel := lipgloss.NewStyle().
 			Foreground(styles.Colors.TextMuted).
-			Render(st.CurrentPhase + ": ")
+			Render(phase + ": ")
+
 		fileName := st.CurrentFile
-		// Shorten path if too long
-		if len(fileName) > 40 {
+		if fileName == "" {
+			fileName = "..."
+		} else if len(fileName) > 40 {
+			// Shorten path if too long
 			parts := strings.Split(fileName, "/")
 			if len(parts) > 2 {
 				fileName = ".../" + strings.Join(parts[len(parts)-2:], "/")

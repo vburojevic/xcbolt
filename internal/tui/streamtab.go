@@ -347,12 +347,12 @@ func (st *StreamTab) shortenPath(path string) string {
 func (st *StreamTab) emptyView(styles Styles) string {
 	icons := styles.Icons
 
-	// Large icon (5x size effect) - use Idle icon (different from tab icon)
+	// Large icon - use Idle icon (different from tab icon)
 	iconStyle := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextMuted).
 		Bold(true).
 		Padding(1, 0)
-	bigIcon := iconStyle.Render(icons.Idle + "  " + icons.Idle + "  " + icons.Idle + "  " + icons.Idle + "  " + icons.Idle)
+	bigIcon := iconStyle.Render(icons.Idle)
 
 	msg := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle).
