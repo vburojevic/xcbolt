@@ -153,6 +153,7 @@ type Model struct {
 	cancelFn   context.CancelFunc
 	eventCh    <-chan core.Event
 	doneCh     <-chan opDoneMsg
+	tickCount  int // For spinner animation timing
 
 	// Progress tracking (for stage indicators)
 	currentStage  string
@@ -322,6 +323,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Only continue ticking if we need animation (spinner while running)
 		if m.running {
 			cmds = append(cmds, tickCmd())
+			// Advance Dashboard spinner (~4 times per second)
+			m.tickCount++
+			if m.tickCount%15 == 0 {
+				m.tabView.SummaryTab.AdvanceSpinner()
+			}
 		}
 
 	case tea.KeyMsg:
@@ -1150,9 +1156,11 @@ func (m *Model) handleEvent(ev core.Event) {
 	m.parseProgressFromEvent(ev)
 	// Error/warning counts are tracked by PhaseView through categorizeLogLine
 
-	// Route errors/warnings to Dashboard's recent issues
+	// Track errors/warnings count for Dashboard
 	if ev.Type == "error" || strings.Contains(strings.ToLower(ev.Msg), "error:") {
-		m.tabView.SummaryTab.AddRecentError(ev.Msg)
+		m.tabView.SummaryTab.IncrementErrors()
+	} else if strings.Contains(strings.ToLower(ev.Msg), "warning:") {
+		m.tabView.SummaryTab.IncrementWarnings()
 	}
 }
 
@@ -1170,9 +1178,6 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 		m.progressTotal = 0
 		return
 	}
-
-	// Track previous stage to detect phase completions
-	prevStage := m.currentStage
 
 	// Extract stage from common xcodebuild output patterns
 	switch {
@@ -1194,11 +1199,6 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 		m.currentStage = "Analyzing"
 	case strings.Contains(msg, "Resolving") || strings.Contains(msg, "Resolved"):
 		m.currentStage = "Resolve"
-	}
-
-	// Mark previous phase as completed when stage changes
-	if prevStage != "" && prevStage != m.currentStage {
-		m.tabView.SummaryTab.CompletePhase(prevStage)
 	}
 
 	// Extract current file being processed
@@ -1241,7 +1241,7 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 	m.progressBar.SetProgress(m.progressCur, m.progressTotal, m.currentStage)
 
 	// Update Dashboard with live progress
-	m.tabView.SummaryTab.UpdateProgress(m.currentStage, currentFile, m.progressCur, m.progressTotal)
+	m.tabView.SummaryTab.UpdateProgress(currentFile, m.progressCur, m.progressTotal)
 }
 
 func isPrettyEvent(ev core.Event) bool {
@@ -1371,7 +1371,6 @@ func (m *Model) startOp(name string) tea.Cmd {
 
 	// Initialize Dashboard for live activity
 	m.tabView.SummaryTab.SetRunning()
-	m.tabView.SummaryTab.SetPhases([]string{"Resolve", "Compile", "Link", "Sign"})
 
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))

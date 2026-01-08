@@ -298,13 +298,19 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 
 	line := lipgloss.JoinHorizontal(lipgloss.Top, lineParts...)
 
+	// Ensure line fills full width
+	lineContainer := lipgloss.NewStyle().
+		Width(tv.Width).
+		MaxWidth(tv.Width).
+		Render(line)
+
 	// Render border
 	border := lipgloss.NewStyle().
 		Foreground(styles.Colors.Border).
 		Width(tv.Width).
 		Render(strings.Repeat("─", tv.Width))
 
-	return lipgloss.JoinVertical(lipgloss.Left, line, border)
+	return lipgloss.JoinVertical(lipgloss.Left, lineContainer, border)
 }
 
 // issuesSubtitle returns the subtitle for the Issues tab
