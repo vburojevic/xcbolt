@@ -108,29 +108,11 @@ func (l Layout) RenderHeader(content string, styles Styles) string {
 		content = "xcbolt"
 	}
 
-	// DEBUG: Prepend marker to verify header is rendered
-	content = ">>> " + content
-
-	if l.MinimalMode {
-		// Minimal mode: single line with explicit Height
-		style := lipgloss.NewStyle().
-			Width(l.Width).
-			Height(1).
-			Padding(0, 1)
-		return style.Render(content)
-	}
-
-	// Full mode: single style block with explicit Height (mirrors hints bar pattern)
-	// This ensures the element takes its designated space in JoinVertical
-	style := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(l.StatusBarHeight).
-		Padding(0, 1).
-		BorderStyle(lipgloss.Border{Bottom: "─"}).
-		BorderForeground(styles.Colors.Border).
-		BorderBottom(true)
-
-	return style.Render(content)
+	// DEBUG: Simplest possible approach - raw strings, no lipgloss styling
+	// This tests if the issue is with lipgloss or with the layout logic
+	line1 := "=== HEADER: " + content
+	line2 := strings.Repeat("─", l.Width)
+	return line1 + "\n" + line2
 }
 
 // RenderProgressBar renders the progress bar below status bar
