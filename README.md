@@ -1,4 +1,4 @@
-# xcbolt
+# ⚡ xcbolt
 
 **A modern Xcode CLI and interactive TUI that humans and AI agents both love.**
 
