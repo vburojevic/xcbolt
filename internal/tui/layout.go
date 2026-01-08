@@ -63,7 +63,7 @@ func (l Layout) ContentWidth() int {
 }
 
 // ContentHeight returns the height available for the content pane
-// Note: TabView handles its own tab bar height internally, so we don't subtract it here
+// Note: This is a rough estimate - actual height is calculated dynamically in RenderFullLayout
 func (l Layout) ContentHeight() int {
 	if l.MinimalMode {
 		// In minimal mode: 1 line status, rest for content
@@ -108,11 +108,19 @@ func (l Layout) RenderHeader(content string, styles Styles) string {
 		content = "xcbolt"
 	}
 
-	// DEBUG: Simplest possible approach - raw strings, no lipgloss styling
-	// This tests if the issue is with lipgloss or with the layout logic
-	line1 := "=== HEADER: " + content
-	line2 := strings.Repeat("─", l.Width)
-	return line1 + "\n" + line2
+	if l.MinimalMode {
+		// Minimal mode: single line
+		return " " + content
+	}
+
+	// Full mode: content line + separator
+	// Use padding for the content
+	contentLine := " " + content
+	separator := lipgloss.NewStyle().
+		Foreground(styles.Colors.Border).
+		Render(strings.Repeat("─", l.Width))
+
+	return contentLine + "\n" + separator
 }
 
 // RenderProgressBar renders the progress bar below status bar
@@ -121,12 +129,7 @@ func (l Layout) RenderProgressBar(content string, styles Styles) string {
 		return ""
 	}
 
-	style := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(l.ProgressHeight).
-		Padding(0, 1)
-
-	return style.Render(content)
+	return " " + content
 }
 
 // RenderHintsBar renders the hints bar at the bottom
@@ -135,55 +138,76 @@ func (l Layout) RenderHintsBar(content string, styles Styles) string {
 		return ""
 	}
 
-	style := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(l.HintsBarHeight).
-		Padding(0, 1).
-		BorderStyle(lipgloss.Border{Top: "─"}).
-		BorderForeground(styles.Colors.BorderMuted).
-		BorderTop(true).
-		Foreground(styles.Colors.TextSubtle)
+	separator := lipgloss.NewStyle().
+		Foreground(styles.Colors.BorderMuted).
+		Render(strings.Repeat("─", l.Width))
 
-	return style.Render(content)
+	contentLine := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextSubtle).
+		Render(" " + content)
+
+	return separator + "\n" + contentLine
 }
 
 // RenderFullLayout composes all layout elements
+// KEY FIX: Calculate content height DYNAMICALLY based on actual rendered header/hints heights
 func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar string, styles Styles) string {
 	if l.MinimalMode {
 		// Minimal mode: header + content only
-		var parts []string
-		parts = append(parts, l.RenderHeader(statusBar, styles))
+		header := l.RenderHeader(statusBar, styles)
+		headerHeight := lipgloss.Height(header)
 
+		contentHeight := maxInt(0, l.Height-headerHeight)
 		contentStyle := lipgloss.NewStyle().
 			Width(l.Width).
-			Height(l.ContentHeight())
-		parts = append(parts, contentStyle.Render(content))
+			Height(contentHeight)
 
-		return lipgloss.JoinVertical(lipgloss.Left, parts...)
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			contentStyle.Render(content),
+		)
 	}
 
-	var parts []string
+	// Render header and hints first to measure their actual heights
+	header := l.RenderHeader(statusBar, styles)
+	hints := l.RenderHintsBar(hintsBar, styles)
 
-	// Header at top
-	parts = append(parts, l.RenderHeader(statusBar, styles))
+	headerHeight := lipgloss.Height(header)
+	hintsHeight := lipgloss.Height(hints)
 
-	// Progress bar (if visible)
+	// Calculate remaining height for content
+	contentHeight := l.Height - headerHeight - hintsHeight
+
+	// Account for progress bar if visible
+	var progress string
 	if l.ShowProgressBar && progressBar != "" {
-		parts = append(parts, l.RenderProgressBar(progressBar, styles))
+		progress = l.RenderProgressBar(progressBar, styles)
+		contentHeight -= lipgloss.Height(progress)
 	}
 
-	// Content area (full width)
+	contentHeight = maxInt(0, contentHeight)
+
+	// Render content with calculated height
 	contentStyle := lipgloss.NewStyle().
 		Width(l.Width).
-		Height(l.ContentHeight())
-	parts = append(parts, contentStyle.Render(content))
+		Height(contentHeight)
+	renderedContent := contentStyle.Render(content)
 
-	// Hints bar at bottom
-	if l.ShowHintsBar {
-		parts = append(parts, l.RenderHintsBar(hintsBar, styles))
+	// Join all parts
+	if progress != "" {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			progress,
+			renderedContent,
+			hints,
+		)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		renderedContent,
+		hints,
+	)
 }
 
 // RenderSplitLayout renders a split view with top and bottom panes
@@ -193,29 +217,40 @@ func (l Layout) RenderSplitLayout(statusBar, progressBar, topContent, bottomCont
 		return l.RenderFullLayout(statusBar, progressBar, topContent, hintsBar, styles)
 	}
 
-	var parts []string
+	// Render header and hints first to measure their actual heights
+	header := l.RenderHeader(statusBar, styles)
+	hints := l.RenderHintsBar(hintsBar, styles)
 
-	// Header at top
-	parts = append(parts, l.RenderHeader(statusBar, styles))
+	headerHeight := lipgloss.Height(header)
+	hintsHeight := lipgloss.Height(hints)
 
-	// Progress bar (if visible)
+	// Calculate remaining height for content (minus 1 for divider)
+	totalContentHeight := l.Height - headerHeight - hintsHeight - 1
+
+	// Account for progress bar if visible
+	var progress string
 	if l.ShowProgressBar && progressBar != "" {
-		parts = append(parts, l.RenderProgressBar(progressBar, styles))
+		progress = l.RenderProgressBar(progressBar, styles)
+		totalContentHeight -= lipgloss.Height(progress)
 	}
 
-	// Top pane (Build Logs)
-	topHeight := l.SplitTopHeight()
-	topStyle := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(topHeight)
-	parts = append(parts, topStyle.Render(topContent))
+	totalContentHeight = maxInt(0, totalContentHeight)
 
-	// Divider with focus indicator
+	// Split 60/40
+	topHeight := totalContentHeight * 60 / 100
+	bottomHeight := totalContentHeight - topHeight
+
+	// Render panes
+	topStyle := lipgloss.NewStyle().Width(l.Width).Height(topHeight)
+	bottomStyle := lipgloss.NewStyle().Width(l.Width).Height(bottomHeight)
+
+	renderedTop := topStyle.Render(topContent)
+	renderedBottom := bottomStyle.Render(bottomContent)
+
+	// Build divider with labels
 	dividerStyle := lipgloss.NewStyle().Foreground(styles.Colors.BorderMuted)
 	dividerChar := "─"
-	divider := strings.Repeat(dividerChar, l.Width)
 
-	// Show pane labels in divider
 	topLabel := " Build "
 	bottomLabel := " Console "
 	if topFocused {
@@ -224,34 +259,39 @@ func (l Layout) RenderSplitLayout(statusBar, progressBar, topContent, bottomCont
 		bottomLabel = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true).Render("●") + " Console "
 	}
 
-	// Build divider with labels
 	labelStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 	leftLabel := labelStyle.Render(topLabel)
 	rightLabel := labelStyle.Render(bottomLabel)
 
-	// Calculate remaining space
 	leftWidth := lipgloss.Width(leftLabel)
 	rightWidth := lipgloss.Width(rightLabel)
-	middleWidth := l.Width - leftWidth - rightWidth - 4 // 4 for spacing
+	middleWidth := l.Width - leftWidth - rightWidth - 4
 
+	var divider string
 	if middleWidth > 0 {
 		middleDivider := dividerStyle.Render(strings.Repeat(dividerChar, middleWidth))
-		parts = append(parts, leftLabel+"─"+middleDivider+"─"+rightLabel)
+		divider = leftLabel + "─" + middleDivider + "─" + rightLabel
 	} else {
-		parts = append(parts, dividerStyle.Render(divider))
+		divider = dividerStyle.Render(strings.Repeat(dividerChar, l.Width))
 	}
 
-	// Bottom pane (Console)
-	bottomHeight := l.SplitBottomHeight()
-	bottomStyle := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(bottomHeight)
-	parts = append(parts, bottomStyle.Render(bottomContent))
-
-	// Hints bar at bottom
-	if l.ShowHintsBar {
-		parts = append(parts, l.RenderHintsBar(hintsBar, styles))
+	// Join all parts
+	if progress != "" {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			progress,
+			renderedTop,
+			divider,
+			renderedBottom,
+			hints,
+		)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header,
+		renderedTop,
+		divider,
+		renderedBottom,
+		hints,
+	)
 }
