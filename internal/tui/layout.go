@@ -103,26 +103,28 @@ func (l Layout) SplitBottomHeight() int {
 
 // RenderStatusBar renders the full-width status bar at the top
 func (l Layout) RenderStatusBar(content string, styles Styles) string {
-	if l.MinimalMode {
-		// Minimal mode: single line, no border
-		style := lipgloss.NewStyle().
-			Width(l.Width).
-			Height(1).
-			Padding(0, 1)
-		return style.Render(content)
+	// Ensure we always have visible content
+	if content == "" {
+		content = "xcbolt"
 	}
 
-	// Create style fresh (like RenderHintsBar) to ensure consistent rendering
-	style := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(l.StatusBarHeight).
-		Padding(0, 1).
-		Background(styles.Colors.Surface).
-		BorderStyle(lipgloss.Border{Bottom: "─"}).
-		BorderForeground(styles.Colors.Border).
-		BorderBottom(true)
+	if l.MinimalMode {
+		// Minimal mode: just content + newline
+		return content + "\n"
+	}
 
-	return style.Render(content)
+	// Render content line with padding
+	contentStyle := lipgloss.NewStyle().
+		Width(l.Width).
+		Padding(0, 1)
+	contentLine := contentStyle.Render(content)
+
+	// Render separator line manually (not using Border which has rendering issues)
+	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.Border)
+	separator := sepStyle.Render(strings.Repeat("─", l.Width))
+
+	// Return content + newline + separator (explicit structure, no Height dependency)
+	return contentLine + "\n" + separator
 }
 
 // RenderProgressBar renders the progress bar below status bar
