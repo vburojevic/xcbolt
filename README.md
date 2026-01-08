@@ -1,121 +1,179 @@
-# xcbolt (Go)
+# xcbolt
 
-A modern Xcode CLI + TUI built with:
+**A modern Xcode CLI and interactive TUI that humans and AI agents both love.**
 
-- **Cobra** for commands
-- **Bubble Tea** for the interactive TUI
-- **Bubbles** (viewport, spinner, help)
-- **Lip Gloss** for styling
-- **Huh** for the init wizard
-- **Harmonica** for toast animation
-- `howett.net/plist` for parsing `Info.plist`
-
-This project is intentionally **self-contained** and uses Apple tooling via `xcrun`:
-
-- `xcodebuild` (build/test/list schemes)
-- `simctl` (simulators)
-- `devicectl` (physical devices)
-- `xcresulttool` (test summaries)
-
-> It’s designed to be a solid starting point you can extend.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)
+![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple)
+![Homebrew](https://img.shields.io/badge/Homebrew-vburojevic%2Ftap-FBB040?logo=homebrew)
 
 ---
 
-## Installation (Homebrew)
+## Highlights
 
-```bash
-brew tap vburojevic/tap
-brew install xcbolt
-```
+- **Interactive TUI** — Card-based dashboard with live build progress, errors, and quick actions
+- **CLI Power** — Full `xcodebuild` control with NDJSON output for CI/CD pipelines
+- **AI-Friendly** — Structured JSON events perfect for agent orchestration and automation
+- **Zero Config** — Auto-detects workspaces, schemes, simulators, and devices
+- **Unified Tooling** — Build, test, run, and manage simulators/devices in one tool
 
-Or in one line:
+---
 
+## Installation
+
+**Homebrew (recommended):**
 ```bash
 brew install vburojevic/tap/xcbolt
 ```
 
----
-
-## Quick start
-
+**From source:**
 ```bash
-cd xcbolt-go
-go mod tidy
-go build ./cmd/xcbolt
-./xcbolt --help
+git clone https://github.com/xcbolt/xcbolt.git
+cd xcbolt
+go build -o xcbolt ./cmd/xcbolt
 ```
-
-### Initialize a project
-
-From your Xcode project root:
-
-```bash
-./xcbolt init
-```
-
-This writes `.xcbolt/config.json`.
-
-### Use the TUI
-
-```bash
-./xcbolt
-# or
-./xcbolt tui
-```
-
-Keybinds (shown in-app with `?`):
-
-- `b` build
-- `r` run
-- `t` test
-- `l` logs tab
-- `i` init wizard
-- `c` refresh context
-- `esc` cancel running op
-- `tab` / `shift+tab` switch tabs
-- `q` quit
 
 ---
 
-## CLI commands
+## Quick Start
 
 ```bash
-./xcbolt context
-./xcbolt doctor
-./xcbolt build
-./xcbolt test --list
-./xcbolt run --console
-./xcbolt logs --predicate 'process == "MyApp"'
-./xcbolt simulator list
-./xcbolt device list
-./xcbolt apps
-./xcbolt stop <bundle-id>
+# 1. Navigate to your Xcode project
+cd ~/Projects/MyApp
+
+# 2. Initialize config (optional — auto-config works for simple projects)
+xcbolt init
+
+# 3. Launch the TUI
+xcbolt
 ```
 
-### JSON output (NDJSON)
+---
 
-All commands support:
+## Interactive TUI
+
+Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
+
+| Tab | Description |
+|-----|-------------|
+| **Stream** | Real-time build output with search and filtering |
+| **Issues** | Errors and warnings extracted for quick navigation |
+| **Summary** | Card-based dashboard with project info and build status |
+
+### Keybindings
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `b` | Build | `1` | Stream tab |
+| `r` | Run | `2` | Issues tab |
+| `t` | Test | `3` | Summary tab |
+| `c` | Clean | `tab` | Next tab |
+| `x` | Stop app | `/` | Search logs |
+| `s` | Select scheme | `n` / `N` | Next/prev error |
+| `d` | Select destination | `o` | Open in Xcode |
+| `i` | Init wizard | `O` | Open in $EDITOR |
+| `Ctrl+K` | Command palette | `?` | Help |
+| `esc` | Cancel operation | `q` | Quit |
+
+**Scrolling:** Arrow keys, `j`/`k` (vim), `PgUp`/`PgDn`, `Ctrl+U`/`Ctrl+D`
+
+---
+
+## CLI Commands
+
+### Build Commands
+
+| Command | Description |
+|---------|-------------|
+| `xcbolt build` | Build the configured scheme |
+| `xcbolt test` | Run tests |
+| `xcbolt run` | Build, install, and launch on simulator/device |
+| `xcbolt clean` | Clean derived data |
+
+### Info & Setup
+
+| Command | Description |
+|---------|-------------|
+| `xcbolt init` | Interactive setup wizard |
+| `xcbolt context` | Show project context (schemes, destinations) |
+| `xcbolt doctor` | Validate Xcode environment |
+
+### Simulator Management
+
+| Command | Description |
+|---------|-------------|
+| `xcbolt simulator list` | List available simulators |
+| `xcbolt simulator boot <udid>` | Boot a simulator |
+| `xcbolt simulator shutdown <udid>` | Shutdown a simulator |
+
+### Device Management
+
+| Command | Description |
+|---------|-------------|
+| `xcbolt device list` | List connected physical devices |
+
+### Other
+
+| Command | Description |
+|---------|-------------|
+| `xcbolt logs` | Stream simulator/device logs |
+| `xcbolt apps` | List installed apps |
+| `xcbolt stop <bundle-id>` | Stop a running app |
+
+### Examples
 
 ```bash
-./xcbolt --json build
+# Build with scheme override
+xcbolt build --scheme MyScheme --configuration Release
+
+# Run with console output
+xcbolt run --console
+
+# Stream logs with predicate filter
+xcbolt logs --predicate 'process == "MyApp"'
+
+# List tests without running
+xcbolt test --list
 ```
 
-This outputs newline-delimited JSON events (easy to pipe into other tools).
+---
 
-### Log formatting (optional)
+## CI/CD Integration
 
-By default, xcbolt streams raw `xcodebuild` output. If you have a formatter installed,
-you can enable pretty logs for both CLI and TUI:
+All commands support NDJSON event streaming with the `--json` flag:
 
 ```bash
-./xcbolt --log-format auto build       # prefer xcpretty, fallback to xcbeautify
-./xcbolt --log-format xcpretty test
+xcbolt --json build
+xcbolt --json test | jq '.type'
 ```
 
-Config (in `.xcbolt/config.json`):
+**Event types emitted:**
+
+| Type | Description |
+|------|-------------|
+| `log` | Build output line |
+| `error` | Error message |
+| `warning` | Warning message |
+| `result` | Operation result with data |
+| `status` | Status update |
+
+---
+
+## Configuration
+
+Running `xcbolt init` creates `.xcbolt/config.json`:
 
 ```json
 {
+  "version": 1,
+  "workspace": "MyApp.xcworkspace",
+  "scheme": "MyApp",
+  "configuration": "Debug",
+  "destination": {
+    "kind": "simulator",
+    "udid": "...",
+    "name": "iPhone 16 Pro"
+  },
   "xcodebuild": {
     "logFormat": "auto",
     "logFormatArgs": []
@@ -123,24 +181,112 @@ Config (in `.xcbolt/config.json`):
 }
 ```
 
-`--json` output always emits raw `xcodebuild` lines.
+| Field | Description |
+|-------|-------------|
+| `workspace` / `project` | Path to `.xcworkspace` or `.xcodeproj` |
+| `scheme` | Build scheme name |
+| `configuration` | Build configuration (`Debug` / `Release`) |
+| `destination` | Target simulator or device |
+| `xcodebuild.logFormat` | Log formatter: `auto`, `xcpretty`, `xcbeautify`, `raw` |
 
 ---
 
-## Project layout
+## AI Agent Context
 
-- `cmd/xcbolt` — entrypoint
-- `internal/cli` — Cobra commands
-- `internal/tui` — Bubble Tea UI
-- `internal/core` — Xcode/simctl/devicectl wrappers, config, operations
-- `internal/util` — small utilities
+For AI agents, coding assistants, and automation tools — structured context for working with xcbolt.
+
+### Project Metadata
+
+```yaml
+name: xcbolt
+type: CLI + TUI
+language: Go 1.25+
+frameworks:
+  - Cobra (CLI)
+  - Bubble Tea (TUI)
+  - Lip Gloss (styling)
+config_file: .xcbolt/config.json
+output_format: NDJSON (--json flag)
+```
+
+### File Structure
+
+```
+xcbolt/
+├── cmd/xcbolt/main.go      # Entrypoint
+├── internal/
+│   ├── cli/                # Cobra command definitions
+│   ├── tui/                # Bubble Tea TUI components
+│   ├── core/               # Xcode tooling wrappers
+│   └── util/               # Shared utilities
+└── .xcbolt/
+    ├── config.json         # Project configuration
+    ├── DerivedData/        # Build artifacts
+    └── Results/            # Test result bundles
+```
+
+### Key Patterns for Agents
+
+**Building:**
+```bash
+xcbolt --json build          # Structured output
+# Parse NDJSON: {"type": "log"|"error"|"result", "msg": "..."}
+# Exit code: 0 = success, non-zero = failure
+```
+
+**Testing:**
+```bash
+xcbolt test --list           # Enumerate available tests
+xcbolt --json test           # Run with structured output
+xcbolt test --only "Tests/MyTest/testMethod"  # Filter tests
+```
+
+**Environment validation:**
+```bash
+xcbolt doctor                # Check Xcode toolchain
+xcbolt context               # Current project state
+```
+
+**Simulator control:**
+```bash
+xcbolt simulator list        # JSON array of simulators
+xcbolt simulator boot <udid>
+xcbolt simulator shutdown <udid>
+```
+
+### Event Schema
+
+```typescript
+interface Event {
+  type: "log" | "error" | "warning" | "result" | "status";
+  msg: string;
+  err?: string;    // Present on error events
+  data?: object;   // Present on result events
+}
+```
 
 ---
 
-## Notes / next ideas
+## Development
 
-- Add smarter test selection UI (targets → test classes → test methods)
-- Add result bundle browsing (xcresult object graphs)
-- Add device log streaming via `devicectl` where supported
-- Add `--destination` parsing like `xcodebuild -destination`
-- Add concurrency limits + log filtering in TUI
+```bash
+make build   # Build binary
+make test    # Run tests
+make run     # Build and launch
+```
+
+See [AGENTS.md](./AGENTS.md) for contribution guidelines, coding standards, and architecture documentation.
+
+---
+
+## Requirements
+
+- **macOS** with Xcode Command Line Tools
+- **Go 1.25+** (building from source only)
+- **Xcode 15+** recommended for full feature support
+
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE) for details.
