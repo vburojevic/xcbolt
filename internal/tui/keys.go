@@ -48,15 +48,16 @@ type keyMap struct {
 	Refresh key.Binding
 
 	// Search & Navigation
-	Search         key.Binding
-	NextError      key.Binding
-	PrevError      key.Binding
-	OpenXcode      key.Binding
-	OpenEditor     key.Binding
-	ToggleRawView  key.Binding
-	ToggleCollapse key.Binding
-	ExpandAll      key.Binding
-	CollapseAll    key.Binding
+	Search           key.Binding
+	NextError        key.Binding
+	PrevError        key.Binding
+	OpenXcode        key.Binding
+	OpenEditor       key.Binding
+	ToggleRawView    key.Binding
+	ToggleCollapse   key.Binding
+	ExpandAll        key.Binding
+	CollapseAll      key.Binding
+	ToggleErrorsOnly key.Binding
 
 	// Viewport/Scroll (arrow keys only, no vim keys)
 	ScrollUp     key.Binding
@@ -165,7 +166,7 @@ func defaultKeyMap() keyMap {
 		),
 		ToggleRawView: key.NewBinding(
 			key.WithKeys("v"),
-			key.WithHelp("v", "toggle raw/grouped view"),
+			key.WithHelp("v", "toggle stream view"),
 		),
 		ToggleCollapse: key.NewBinding(
 			key.WithKeys("enter", " "),
@@ -178,6 +179,10 @@ func defaultKeyMap() keyMap {
 		CollapseAll: key.NewBinding(
 			key.WithKeys("E"),
 			key.WithHelp("E", "collapse all phases"),
+		),
+		ToggleErrorsOnly: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "toggle errors-only"),
 		),
 
 		// Viewport/Scroll - arrow keys only (no vim j/k)
@@ -213,10 +218,10 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("ctrl+d"),
 			key.WithHelp("^D", "half page down"),
 		),
-		// Repurposed: now toggles raw/grouped view
+		// Repurposed: now toggles stream view
 		ToggleAutoFollow: key.NewBinding(
 			key.WithKeys("f"),
-			key.WithHelp("f", "toggle view"),
+			key.WithHelp("f", "toggle stream view"),
 		),
 
 		// Selector navigation
@@ -254,7 +259,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		// Configuration
 		{k.Scheme, k.Destination, k.Palette, k.Init, k.Refresh},
 		// View controls
-		{k.ToggleRawView, k.ToggleCollapse, k.ExpandAll, k.CollapseAll},
+		{k.ToggleRawView, k.ToggleCollapse, k.ExpandAll, k.CollapseAll, k.ToggleErrorsOnly},
 		// Scrolling
 		{k.ScrollUp, k.ScrollDown, k.PageUp, k.PageDown, k.ScrollTop, k.ScrollBottom},
 		// Navigation & Other

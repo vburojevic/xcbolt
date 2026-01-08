@@ -14,12 +14,12 @@ import (
 
 // BuildPhase represents a collapsible build phase (Compiling, Linking, etc.)
 type BuildPhase struct {
-	Name      string       // Phase name: "Compiling", "Linking", etc.
-	Lines     []LogLine    // Log lines in this phase
-	Collapsed bool         // Whether phase is collapsed
-	Status    PhaseStatus  // Current status
-	FileCount int          // Number of files processed (for display)
-	HasError  bool         // Quick flag for error presence
+	Name      string      // Phase name: "Compiling", "Linking", etc.
+	Lines     []LogLine   // Log lines in this phase
+	Collapsed bool        // Whether phase is collapsed
+	Status    PhaseStatus // Current status
+	FileCount int         // Number of files processed (for display)
+	HasError  bool        // Quick flag for error presence
 }
 
 // PhaseStatus represents the build phase status
@@ -45,13 +45,13 @@ type LogLine struct {
 type LogLineType int
 
 const (
-	LogLineNormal LogLineType = iota
-	LogLineInfo               // Build step info (▸ arrows)
-	LogLineSuccess            // Success message or passed test
-	LogLineWarning            // Compiler warning
-	LogLineError              // Compiler error or test failure
-	LogLineTestPass           // Passed test
-	LogLineTestFail           // Failed test
+	LogLineNormal   LogLineType = iota
+	LogLineInfo                 // Build step info (▸ arrows)
+	LogLineSuccess              // Success message or passed test
+	LogLineWarning              // Compiler warning
+	LogLineError                // Compiler error or test failure
+	LogLineTestPass             // Passed test
+	LogLineTestFail             // Failed test
 )
 
 // =============================================================================
@@ -64,8 +64,14 @@ type PhaseView struct {
 	FlatLines []string // Raw lines for fallback/raw mode
 
 	// Scroll state
-	ScrollPos   int // Scroll position in visible lines
-	VisibleRows int // Number of visible rows
+	ScrollPos       int // Scroll position in visible lines
+	VisibleRows     int // Number of visible rows
+	AutoFollow      bool
+	StickyHeader    bool
+	ShowErrorsOnly  bool
+	Width           int
+	RenderMode      PhaseRenderMode
+	LastRenderLines int
 
 	// Selection
 	SelectedPhase int  // Currently selected phase (-1 for none)
@@ -87,6 +93,14 @@ type SearchMatch struct {
 	Line  int
 }
 
+// PhaseRenderMode controls how phases are rendered.
+type PhaseRenderMode int
+
+const (
+	PhaseRenderGrouped PhaseRenderMode = iota
+	PhaseRenderCards
+)
+
 // NewPhaseView creates a new phase view
 func NewPhaseView() PhaseView {
 	return PhaseView{
@@ -94,6 +108,9 @@ func NewPhaseView() PhaseView {
 		FlatLines:     []string{},
 		SmartCollapse: true,
 		SelectedPhase: -1,
+		AutoFollow:    true,
+		StickyHeader:  true,
+		RenderMode:    PhaseRenderGrouped,
 	}
 }
 
@@ -103,10 +120,13 @@ func (v *PhaseView) Clear() {
 	v.FlatLines = []string{}
 	v.ScrollPos = 0
 	v.SelectedPhase = -1
+	v.AutoFollow = true
+	v.LastRenderLines = 0
 }
 
 // SetSize sets the visible dimensions
 func (v *PhaseView) SetSize(width, height int) {
+	v.Width = width
 	v.VisibleRows = height
 }
 
@@ -260,11 +280,12 @@ func (v *PhaseView) ScrollUp(lines int) {
 	if v.ScrollPos < 0 {
 		v.ScrollPos = 0
 	}
+	v.AutoFollow = false
 }
 
 // ScrollDown scrolls the view down
 func (v *PhaseView) ScrollDown(lines int) {
-	maxScroll := v.totalLines() - v.VisibleRows
+	maxScroll := v.totalLines() - v.visibleRowsForContent()
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -272,31 +293,37 @@ func (v *PhaseView) ScrollDown(lines int) {
 	if v.ScrollPos > maxScroll {
 		v.ScrollPos = maxScroll
 	}
+	v.AutoFollow = v.ScrollPos == maxScroll
 }
 
 // GotoTop scrolls to the top
 func (v *PhaseView) GotoTop() {
 	v.ScrollPos = 0
+	v.AutoFollow = false
 }
 
 // GotoBottom scrolls to the bottom
 func (v *PhaseView) GotoBottom() {
-	maxScroll := v.totalLines() - v.VisibleRows
+	maxScroll := v.totalLines() - v.visibleRowsForContent()
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
 	v.ScrollPos = maxScroll
+	v.AutoFollow = true
 }
 
 // autoScroll scrolls to bottom if near the end
 func (v *PhaseView) autoScroll() {
+	if !v.AutoFollow {
+		return
+	}
 	total := v.totalLines()
-	if total <= v.VisibleRows {
+	if total <= v.visibleRowsForContent() {
 		v.ScrollPos = 0
 		return
 	}
 
-	maxScroll := total - v.VisibleRows
+	maxScroll := total - v.visibleRowsForContent()
 	// Auto-follow if within 5 lines of bottom
 	if v.ScrollPos >= maxScroll-5 {
 		v.ScrollPos = maxScroll
@@ -308,12 +335,49 @@ func (v *PhaseView) totalLines() int {
 	if v.ShowRawMode {
 		return len(v.FlatLines)
 	}
+	if v.RenderMode == PhaseRenderCards && v.LastRenderLines > 0 {
+		return v.LastRenderLines
+	}
 
 	count := 0
 	for _, phase := range v.Phases {
+		if v.ShowErrorsOnly {
+			matchCount := v.matchingLineCount(phase)
+			if matchCount == 0 {
+				continue
+			}
+			count++ // Phase header
+			count += matchCount
+			continue
+		}
+
 		count++ // Phase header
 		if !phase.Collapsed {
 			count += len(phase.Lines)
+		}
+	}
+	return count
+}
+
+func (v *PhaseView) visibleRowsForContent() int {
+	rows := v.VisibleRows
+	if rows <= 0 {
+		return 0
+	}
+	if v.RenderMode == PhaseRenderCards {
+		return rows
+	}
+	if v.StickyHeader && !v.ShowRawMode && rows > 1 && len(v.Phases) > 0 {
+		return rows - 1
+	}
+	return rows
+}
+
+func (v *PhaseView) matchingLineCount(phase BuildPhase) int {
+	count := 0
+	for _, line := range phase.Lines {
+		if line.Type == LogLineError || line.Type == LogLineWarning || line.Type == LogLineTestFail {
+			count++
 		}
 	}
 	return count
@@ -527,11 +591,12 @@ func (v *PhaseView) JumpToMatch(phase, line int) {
 	linePos += line
 
 	// Scroll to show the match (centered if possible)
-	targetPos := linePos - v.VisibleRows/2
+	rows := v.visibleRowsForContent()
+	targetPos := linePos - rows/2
 	if targetPos < 0 {
 		targetPos = 0
 	}
-	maxScroll := v.totalLines() - v.VisibleRows
+	maxScroll := v.totalLines() - rows
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -554,13 +619,17 @@ func (v *PhaseView) IsHighlighted(phase, line int) bool {
 // =============================================================================
 
 // View renders the log view
-func (v PhaseView) View(styles Styles) string {
+func (v *PhaseView) View(styles Styles) string {
 	if v.ShowRawMode {
 		return v.renderRaw(styles)
 	}
 
 	if len(v.Phases) == 0 {
 		return v.renderRaw(styles)
+	}
+
+	if v.RenderMode == PhaseRenderCards {
+		return v.renderCards(styles)
 	}
 
 	return v.renderGrouped(styles)
@@ -572,9 +641,14 @@ func (v PhaseView) renderRaw(styles Styles) string {
 		return ""
 	}
 
+	contentRows := v.visibleRowsForContent()
+	if contentRows <= 0 {
+		return ""
+	}
+
 	// Apply scroll
 	startIdx := v.ScrollPos
-	endIdx := startIdx + v.VisibleRows
+	endIdx := startIdx + contentRows
 	if startIdx >= len(v.FlatLines) {
 		startIdx = len(v.FlatLines) - 1
 		if startIdx < 0 {
@@ -597,25 +671,124 @@ func (v PhaseView) renderRaw(styles Styles) string {
 func (v PhaseView) renderGrouped(styles Styles) string {
 	icons := styles.Icons
 	var allLines []string
+	var linePhases []int
+	headerIndex := map[int]int{}
 
 	for i, phase := range v.Phases {
 		isSelected := v.PhaseMode && i == v.SelectedPhase
 
+		if v.ShowErrorsOnly && v.matchingLineCount(phase) == 0 {
+			continue
+		}
+
 		// Render phase header
 		header := v.renderPhaseHeader(phase, isSelected, styles, icons)
 		allLines = append(allLines, header)
+		linePhases = append(linePhases, i)
+		headerIndex[i] = len(allLines) - 1
 
 		// Render phase content if expanded
-		if !phase.Collapsed {
-			for j, line := range phase.Lines {
-				highlighted := v.IsHighlighted(i, j)
-				rendered := v.renderLogLine(line, highlighted, styles, icons)
-				allLines = append(allLines, "  "+rendered)
+		for j, line := range phase.Lines {
+			if v.ShowErrorsOnly &&
+				line.Type != LogLineError &&
+				line.Type != LogLineWarning &&
+				line.Type != LogLineTestFail {
+				continue
+			}
+			if !v.ShowErrorsOnly && phase.Collapsed {
+				continue
+			}
+			highlighted := v.IsHighlighted(i, j)
+			rendered := v.renderLogLine(line, highlighted, styles, icons)
+			allLines = append(allLines, "  "+rendered)
+			linePhases = append(linePhases, i)
+		}
+	}
+
+	if len(allLines) == 0 {
+		return ""
+	}
+
+	contentRows := v.visibleRowsForContent()
+	if contentRows <= 0 {
+		return ""
+	}
+
+	// Apply scroll
+	startIdx := v.ScrollPos
+	if startIdx >= len(allLines) {
+		startIdx = len(allLines) - 1
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	stickyHeader := ""
+	if v.StickyHeader && len(linePhases) > 0 {
+		lineIdx := startIdx
+		if lineIdx >= len(linePhases) {
+			lineIdx = len(linePhases) - 1
+		}
+		phaseIdx := linePhases[lineIdx]
+		if phaseIdx >= 0 {
+			if headerLine, ok := headerIndex[phaseIdx]; ok && headerLine >= 0 && headerLine < len(allLines) {
+				stickyHeader = allLines[headerLine]
+				if startIdx == headerLine {
+					startIdx++
+				}
 			}
 		}
 	}
 
-	// Apply scroll
+	endIdx := startIdx + contentRows
+	if startIdx >= len(allLines) {
+		startIdx = len(allLines) - 1
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+	if endIdx > len(allLines) {
+		endIdx = len(allLines)
+	}
+
+	visibleLines := allLines[startIdx:endIdx]
+	if stickyHeader != "" {
+		visibleLines = append([]string{stickyHeader}, visibleLines...)
+	}
+
+	return strings.Join(visibleLines, "\n")
+}
+
+// renderCards renders phase cards with borders and summaries.
+func (v *PhaseView) renderCards(styles Styles) string {
+	icons := styles.Icons
+	var allLines []string
+
+	for i, phase := range v.Phases {
+		if v.ShowErrorsOnly && v.matchingLineCount(phase) == 0 {
+			continue
+		}
+
+		card := v.renderPhaseCard(i, phase, styles, icons, v.Width)
+		if card == "" {
+			continue
+		}
+		allLines = append(allLines, strings.Split(card, "\n")...)
+		allLines = append(allLines, "")
+	}
+
+	if len(allLines) == 0 {
+		v.LastRenderLines = 0
+		return ""
+	}
+
+	// Drop trailing spacer line.
+	if len(allLines) > 0 && allLines[len(allLines)-1] == "" {
+		allLines = allLines[:len(allLines)-1]
+	}
+
+	v.LastRenderLines = len(allLines)
+
 	startIdx := v.ScrollPos
 	endIdx := startIdx + v.VisibleRows
 	if startIdx >= len(allLines) {
@@ -629,6 +802,88 @@ func (v PhaseView) renderGrouped(styles Styles) string {
 	}
 
 	return strings.Join(allLines[startIdx:endIdx], "\n")
+}
+
+func (v PhaseView) renderPhaseCard(phaseIndex int, phase BuildPhase, styles Styles, icons Icons, width int) string {
+	linesCount, errCount, warnCount := phaseCounts(phase)
+	if v.ShowErrorsOnly && errCount == 0 && warnCount == 0 {
+		return ""
+	}
+
+	statusIcon, statusStyle := phaseStatusStyle(phase, styles, icons)
+	nameStyle := lipgloss.NewStyle().Foreground(styles.Colors.Text).Bold(true)
+
+	headerParts := []string{
+		statusStyle.Render(statusIcon),
+		nameStyle.Render(phase.Name),
+	}
+
+	if linesCount > 0 {
+		metaStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		headerParts = append(headerParts, metaStyle.Render(fmt.Sprintf("%d lines", linesCount)))
+	}
+	if errCount > 0 {
+		headerParts = append(headerParts, styles.StatusStyle("error").Render(fmt.Sprintf("%s %d", icons.Error, errCount)))
+	}
+	if warnCount > 0 {
+		headerParts = append(headerParts, styles.StatusStyle("warning").Render(fmt.Sprintf("%s %d", icons.Warning, warnCount)))
+	}
+
+	var body []string
+	if v.ShowErrorsOnly {
+		for i, line := range phase.Lines {
+			if line.Type != LogLineError && line.Type != LogLineWarning && line.Type != LogLineTestFail {
+				continue
+			}
+			body = append(body, "  "+v.renderLogLine(line, v.IsHighlighted(phaseIndex, i), styles, icons))
+		}
+	} else if phase.Collapsed {
+		muted := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		body = append(body, muted.Render(fmt.Sprintf("%d lines hidden", linesCount)))
+	} else {
+		for i, line := range phase.Lines {
+			body = append(body, "  "+v.renderLogLine(line, v.IsHighlighted(phaseIndex, i), styles, icons))
+		}
+	}
+
+	content := strings.Join(append([]string{strings.Join(headerParts, " ")}, body...), "\n")
+
+	cardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(styles.Colors.Border).
+		Padding(0, 1)
+	if width > 0 {
+		cardStyle = cardStyle.Width(width)
+	}
+
+	return cardStyle.Render(content)
+}
+
+func phaseStatusStyle(phase BuildPhase, styles Styles, icons Icons) (string, lipgloss.Style) {
+	switch phase.Status {
+	case PhaseRunning:
+		return icons.Running, styles.StatusStyle("running")
+	case PhaseSuccess:
+		return icons.Success, styles.StatusStyle("success")
+	case PhaseWarning:
+		return icons.Warning, styles.StatusStyle("warning")
+	case PhaseError:
+		return icons.Error, styles.StatusStyle("error")
+	default:
+		return icons.Idle, lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+	}
+}
+
+func phaseCounts(phase BuildPhase) (lines, errors, warnings int) {
+	for _, line := range phase.Lines {
+		switch line.Type {
+		case LogLineError, LogLineTestFail:
+			errors++
+		case LogLineWarning:
+			warnings++
+		}
+	}
+	return len(phase.Lines), errors, warnings
 }
 
 // renderPhaseHeader renders a phase header line

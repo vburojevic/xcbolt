@@ -33,11 +33,19 @@ const (
 
 // RunModeState tracks the state for run mode split view
 type RunModeState struct {
-	Active      bool      // Whether run mode split view is active
-	ConsoleLogs []string  // App console output (separate from build logs)
-	FocusPane   Pane      // Which pane has focus
-	ConsolePos  int       // Scroll position for console pane
+	Active      bool     // Whether run mode split view is active
+	ConsoleLogs []string // App console output (separate from build logs)
+	FocusPane   Pane     // Which pane has focus
+	ConsolePos  int      // Scroll position for console pane
 }
+
+// LogViewMode controls the main log presentation.
+type LogViewMode int
+
+const (
+	LogViewCards LogViewMode = iota
+	LogViewStream
+)
 
 // =============================================================================
 // Messages
@@ -92,8 +100,8 @@ type Model struct {
 	cfg         core.Config
 	cfgOverride ConfigOverrides
 	info        core.ContextInfo
-	state       core.State  // User state (recents, favorites)
-	gitBranch   string      // Current git branch
+	state       core.State // User state (recents, favorites)
+	gitBranch   string     // Current git branch
 
 	// Window dimensions
 	width  int
@@ -115,24 +123,26 @@ type Model struct {
 	hintsBar    HintsBar
 
 	// Components
-	spinner  spinner.Model
-	viewport viewport.Model
-	wizard   wizardModel
-	selector SelectorModel
-	palette  PaletteModel
+	spinner    spinner.Model
+	viewport   viewport.Model
+	wizard     wizardModel
+	selector   SelectorModel
+	palette    PaletteModel
+	streamView StreamView
 
 	// Status message (shown in results bar)
 	statusMsg string
 
 	// Logs - grouped phase view with collapsible sections
-	phaseView PhaseView
+	phaseView   PhaseView
+	logViewMode LogViewMode
 
 	// Search state
-	searchInput    textinput.Model
-	searchQuery    string
-	searchMatches  []SearchMatch
-	searchCursor   int
-	searchActive   bool
+	searchInput   textinput.Model
+	searchQuery   string
+	searchMatches []SearchMatch
+	searchCursor  int
+	searchActive  bool
 
 	// Operation state
 	running    bool
@@ -194,8 +204,10 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		spinner:     sp,
 		viewport:    vp,
 		phaseView:   NewPhaseView(),
+		streamView:  NewStreamView(),
 		searchInput: si,
 		mode:        ModeNormal,
+		logViewMode: LogViewCards,
 		state:       state,
 		// Layout components
 		layout:      layout,
@@ -284,6 +296,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.info = msg.info
 		m.cfg = msg.cfg
+		m.applyTUIConfig()
 
 		// Fetch git branch
 		m.gitBranch = getGitBranch(m.projectRoot)
@@ -325,6 +338,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.cfg = msg.cfg
+		m.applyTUIConfig()
 		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
 			m.lastErr = err.Error()
 			m.setStatus("Save failed")
@@ -534,6 +548,24 @@ func (m *Model) updateViewportSize() {
 	m.viewport.Height = maxInt(0, m.layout.ContentHeight()-2)
 	// Update PhaseView dimensions
 	m.phaseView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
+	m.streamView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
+}
+
+func (m *Model) applyTUIConfig() {
+	m.phaseView.SmartCollapse = !m.cfg.TUI.ShowAllLogs
+	if m.cfg.TUI.ShowAllLogs {
+		m.phaseView.ExpandAll()
+	}
+}
+
+func (m *Model) toggleLogView() {
+	if m.logViewMode == LogViewCards {
+		m.logViewMode = LogViewStream
+		m.setStatus("Stream view")
+	} else {
+		m.logViewMode = LogViewCards
+		m.setStatus("Phase cards")
+	}
 }
 
 // syncStatusBarState syncs the status bar display with current model state
@@ -683,18 +715,25 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		return loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride)
 
 	case keyMatches(msg, m.keys.ToggleAutoFollow), keyMatches(msg, m.keys.ToggleRawView):
-		// Toggle raw/grouped log view
-		m.phaseView.ToggleRawMode()
-		if m.phaseView.ShowRawMode {
-			m.setStatus("Raw log view")
+		m.toggleLogView()
+
+	case keyMatches(msg, m.keys.ToggleErrorsOnly):
+		m.phaseView.ShowErrorsOnly = !m.phaseView.ShowErrorsOnly
+		if m.phaseView.ShowErrorsOnly {
+			m.logViewMode = LogViewCards
+			m.phaseView.ShowRawMode = false
+			m.phaseView.GotoTop()
+			m.setStatus("Errors/warnings only")
 		} else {
-			m.setStatus("Grouped log view")
+			m.setStatus("All logs")
 		}
 
 	// Scrolling - route to correct pane in run mode
 	case keyMatches(msg, m.keys.ScrollUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(-1)
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.ScrollUp(1)
 		} else {
 			m.phaseView.ScrollUp(1)
 		}
@@ -702,6 +741,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.ScrollDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(1)
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.ScrollDown(1)
 		} else {
 			m.phaseView.ScrollDown(1)
 		}
@@ -709,6 +750,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.ScrollTop):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.runMode.ConsolePos = 0
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.GotoTop()
 		} else {
 			m.phaseView.GotoTop()
 		}
@@ -720,6 +763,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 				maxPos = 0
 			}
 			m.runMode.ConsolePos = maxPos
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.GotoBottom()
 		} else {
 			m.phaseView.GotoBottom()
 		}
@@ -727,6 +772,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.PageUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(-m.layout.SplitBottomHeight())
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.ScrollUp(m.streamView.VisibleRows)
 		} else {
 			m.phaseView.ScrollUp(m.phaseView.VisibleRows)
 		}
@@ -734,6 +781,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.PageDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(m.layout.SplitBottomHeight())
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.ScrollDown(m.streamView.VisibleRows)
 		} else {
 			m.phaseView.ScrollDown(m.phaseView.VisibleRows)
 		}
@@ -741,6 +790,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.HalfPageUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(-m.layout.SplitBottomHeight() / 2)
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.ScrollUp(m.streamView.VisibleRows / 2)
 		} else {
 			m.phaseView.ScrollUp(m.phaseView.VisibleRows / 2)
 		}
@@ -748,6 +799,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.HalfPageDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
 			m.scrollConsole(m.layout.SplitBottomHeight() / 2)
+		} else if m.logViewMode == LogViewStream {
+			m.streamView.ScrollDown(m.streamView.VisibleRows / 2)
 		} else {
 			m.phaseView.ScrollDown(m.phaseView.VisibleRows / 2)
 		}
@@ -1014,18 +1067,40 @@ func (m *Model) saveRecentCombo() {
 func (m *Model) handleEvent(ev core.Event) {
 	line := m.formatEventLine(ev)
 
-	// In run mode, detect console output (after app launches)
-	// Console output typically has type "log" and comes from the running app
-	if m.runMode.Active && m.runningCmd == "run" {
-		// Check if this is console output (app is running, not build output)
-		isConsoleOutput := ev.Type == "log" && m.currentStage == "Running"
-		if isConsoleOutput {
-			m.appendConsoleLog(line)
+	// Stream view always tracks raw or pretty output.
+	switch {
+	case ev.Type == "log_raw":
+		m.streamView.AddRawLine(ev.Msg)
+	case isPrettyEvent(ev):
+		m.streamView.AddPrettyLine(ev.Msg)
+	case ev.Type == "log":
+		m.streamView.AddRawLine(ev.Msg)
+	default:
+		m.streamView.AddRawLine(line)
+	}
+
+	// Phase view should use raw output for structure and ignore pretty lines.
+	appendPhase := false
+	phaseLine := line
+	switch {
+	case ev.Type == "log_raw":
+		appendPhase = true
+		phaseLine = ev.Msg
+	case ev.Type == "log" && !isPrettyEvent(ev):
+		appendPhase = true
+		phaseLine = ev.Msg
+	case ev.Type != "log" && ev.Type != "log_raw":
+		appendPhase = true
+		phaseLine = line
+	}
+
+	if appendPhase {
+		// In run mode, detect console output (after app launches).
+		if m.runMode.Active && m.runningCmd == "run" && ev.Type == "log" && m.currentStage == "Running" {
+			m.appendConsoleLog(phaseLine)
 		} else {
-			m.appendLog(line)
+			m.appendLog(phaseLine)
 		}
-	} else {
-		m.appendLog(line)
 	}
 
 	// Track progress for stage indicators
@@ -1178,6 +1253,7 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	// Append result line to logs
 	resultLine := m.formatResultLine(msg.cmd, success, duration)
 	m.appendLog(resultLine)
+	m.appendStreamLine(resultLine)
 
 	if msg.err != nil {
 		m.lastErr = msg.err.Error()
@@ -1210,9 +1286,12 @@ func (m *Model) startOp(name string) tea.Cmd {
 
 	// Clear logs for new operation
 	m.phaseView.Clear()
+	m.streamView.Clear()
 
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
+	m.appendStreamLine("─────────────────────────────────────────")
+	m.appendStreamLine(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
 
 	// Save this scheme+destination combo to recents
 	m.saveRecentCombo()
@@ -1295,6 +1374,10 @@ func waitForDone(ch <-chan opDoneMsg) tea.Cmd {
 
 func (m *Model) appendLog(line string) {
 	m.phaseView.AddLine(line)
+}
+
+func (m *Model) appendStreamLine(line string) {
+	m.streamView.AddRawLine(line)
 }
 
 func (m *Model) appendConsoleLog(line string) {
@@ -1523,10 +1606,16 @@ func (m Model) searchBarView() string {
 
 // contentView renders the main content area (logs)
 func (m Model) contentView() string {
+	if m.logViewMode == LogViewStream {
+		if !m.streamView.HasLines() {
+			return m.emptyStateView()
+		}
+		return m.streamView.View()
+	}
 	if len(m.phaseView.FlatLines) == 0 {
 		return m.emptyStateView()
 	}
-
+	m.phaseView.RenderMode = PhaseRenderCards
 	return m.phaseView.View(m.styles)
 }
 

@@ -371,6 +371,8 @@ func DefaultHints() []HintItem {
 		{Key: "t", Desc: "test"},
 		{Key: "s", Desc: "scheme"},
 		{Key: "d", Desc: "dest"},
+		{Key: "v", Desc: "stream"},
+		{Key: "F", Desc: "errors"},
 		{Key: "n", Desc: "next err"},
 		{Key: "^K", Desc: "palette"},
 		{Key: "?", Desc: "help"},

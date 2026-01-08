@@ -40,6 +40,10 @@ type LaunchConfig struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
+type TUIConfig struct {
+	ShowAllLogs bool `json:"showAllLogs,omitempty"`
+}
+
 type Config struct {
 	Version int `json:"version"`
 
@@ -58,6 +62,7 @@ type Config struct {
 
 	Xcodebuild XcodebuildConfig `json:"xcodebuild,omitempty"`
 	Launch     LaunchConfig     `json:"launch,omitempty"`
+	TUI        TUIConfig        `json:"tui,omitempty"`
 }
 
 func DefaultConfig(projectRoot string) Config {
@@ -69,6 +74,7 @@ func DefaultConfig(projectRoot string) Config {
 		ResultBundlesPath: filepath.Join(projectRoot, ".xcbolt", "Results"),
 		Xcodebuild:        XcodebuildConfig{Env: map[string]string{}, Options: []string{}, LogFormat: "auto", LogFormatArgs: []string{}},
 		Launch:            LaunchConfig{Env: map[string]string{}, Options: []string{}},
+		TUI:               TUIConfig{ShowAllLogs: true},
 	}
 }
 
