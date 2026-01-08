@@ -8,7 +8,8 @@ import (
 )
 
 // =============================================================================
-// Status Bar - Top bar showing project info and running status
+// Status Bar - Top bar with 3-section layout
+// Left: Project + Branch | Center: Scheme + Destination | Right: Status
 // =============================================================================
 
 // StatusBar renders the top status bar
@@ -32,7 +33,7 @@ type StatusBar struct {
 	LastResultOp      string
 	LastResultTime    string
 
-	// Error/warning counts (shown when not running and issues exist)
+	// Error/warning counts
 	ErrorCount   int
 	WarningCount int
 
@@ -50,117 +51,198 @@ func NewStatusBar() StatusBar {
 	}
 }
 
-// View renders the status bar content
+// View renders the status bar content with 3-section layout
 func (s StatusBar) View(width int, styles Styles) string {
-	isCompact := width < 100
+	return s.ViewWithMinimal(width, styles, false)
+}
+
+// ViewMinimal renders a compact single-line status for small terminals
+func (s StatusBar) ViewMinimal(width int, styles Styles) string {
+	return s.ViewWithMinimal(width, styles, true)
+}
+
+// ViewWithMinimal renders the status bar, optionally in minimal mode
+func (s StatusBar) ViewWithMinimal(width int, styles Styles, minimal bool) string {
 	icons := styles.Icons
+
+	if minimal {
+		return s.renderMinimalView(width, styles, icons)
+	}
+
+	// === LEFT SECTION: Project + Branch ===
+	leftContent := s.renderLeftSection(styles, icons)
+
+	// === CENTER SECTION: Scheme + Destination ===
+	centerContent := s.renderCenterSection(styles)
+
+	// === RIGHT SECTION: Status ===
+	rightContent := s.renderRightSection(styles, icons)
+
+	// Calculate widths and spacing
+	leftWidth := lipgloss.Width(leftContent)
+	centerWidth := lipgloss.Width(centerContent)
+	rightWidth := lipgloss.Width(rightContent)
+
+	// Distribute space: try to center the center section
+	totalContentWidth := leftWidth + centerWidth + rightWidth
+	availableSpace := width - totalContentWidth - 4 // padding
+
+	if availableSpace > 0 {
+		// Distribute space evenly on both sides of center
+		leftSpace := availableSpace / 2
+		rightSpace := availableSpace - leftSpace
+
+		leftSpacer := strings.Repeat(" ", maxInt(1, leftSpace))
+		rightSpacer := strings.Repeat(" ", maxInt(1, rightSpace))
+
+		return lipgloss.JoinHorizontal(lipgloss.Center,
+			leftContent, leftSpacer, centerContent, rightSpacer, rightContent)
+	}
+
+	// Not enough space - just join with minimal spacing
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		leftContent, " ", centerContent, " ", rightContent)
+}
+
+// renderMinimalView renders compact single-line status: xcbolt | Scheme | Device | Status
+func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) string {
+	sep := " | "
+
+	// Brand
+	brandStyle := lipgloss.NewStyle().Bold(true).Foreground(styles.Colors.Accent)
+	brand := brandStyle.Render("xcbolt")
+
+	// Scheme (truncated if needed)
+	scheme := s.Scheme
+	if scheme == "" {
+		scheme = "?"
+	}
+	if len(scheme) > 15 {
+		scheme = scheme[:12] + "..."
+	}
+	schemeStyle := lipgloss.NewStyle().Foreground(styles.Colors.Text)
+
+	// Device (truncated if needed)
+	device := s.Destination
+	if device == "" {
+		device = "?"
+	}
+	if len(device) > 15 {
+		device = device[:12] + "..."
+	}
+	deviceStyle := lipgloss.NewStyle().Foreground(styles.Colors.Text)
+
+	// Status indicator
+	var status string
+	if s.Running {
+		status = s.Spinner.View() + " " + s.Stage
+	} else if s.HasLastResult {
+		if s.LastResultSuccess {
+			status = icons.Success
+		} else {
+			status = icons.Error
+		}
+	} else {
+		status = icons.Idle
+	}
+
+	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+
+	return brand +
+		sepStyle.Render(sep) +
+		schemeStyle.Render(scheme) +
+		sepStyle.Render(sep) +
+		deviceStyle.Render(device) +
+		sepStyle.Render(sep) +
+		status
+}
+
+// renderLeftSection renders project name and git branch
+func (s StatusBar) renderLeftSection(styles Styles, icons Icons) string {
+	var parts []string
 
 	// Brand
 	brandStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(styles.Colors.Accent)
-	brand := brandStyle.Render("xcbolt")
+	parts = append(parts, brandStyle.Render("xcbolt"))
 
-	// Project name (if available)
-	projectPart := ""
+	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+	sep := sepStyle.Render(" · ")
+
+	// Project name
 	if s.ProjectName != "" {
 		projectStyle := lipgloss.NewStyle().
 			Foreground(styles.Colors.Text)
-		projectPart = projectStyle.Render(s.ProjectName)
+		parts = append(parts, sep, projectStyle.Render(s.ProjectName))
 	}
 
-	// Git branch (if available)
-	branchPart := ""
+	// Git branch
 	if s.GitBranch != "" {
 		branchStyle := lipgloss.NewStyle().
 			Foreground(styles.Colors.TextMuted)
-		branchPart = branchStyle.Render(icons.Branch + " " + s.GitBranch)
+		parts = append(parts, sep, branchStyle.Render(icons.Branch+" "+s.GitBranch))
 	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Center, parts...)
+}
+
+// renderCenterSection renders scheme and destination
+func (s StatusBar) renderCenterSection(styles Styles) string {
+	var parts []string
+
+	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+	sep := sepStyle.Render(" · ")
 
 	// Scheme
 	schemeText := "No scheme"
+	schemeStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 	if s.Scheme != "" {
 		schemeText = s.Scheme
+		schemeStyle = lipgloss.NewStyle().Foreground(styles.Colors.Text)
 	}
-	schemeStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Text)
-	schemePart := schemeStyle.Render(schemeText)
+	parts = append(parts, schemeStyle.Render(schemeText))
 
 	// Destination
 	destText := "No destination"
+	destStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 	if s.Destination != "" {
 		destText = s.Destination
-		if !isCompact && s.DestOS != "" {
+		if s.DestOS != "" {
 			destText += " (" + s.DestOS + ")"
 		}
+		destStyle = lipgloss.NewStyle().Foreground(styles.Colors.Text)
 	}
-	destStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Text)
-	destPart := destStyle.Render(destText)
+	parts = append(parts, sep, destStyle.Render(destText))
 
-	// Separator
-	sepStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextSubtle)
-	sep := sepStyle.Render(" · ")
-
-	// Build left side
-	var leftParts []string
-	leftParts = append(leftParts, brand)
-
-	if projectPart != "" {
-		leftParts = append(leftParts, sep, projectPart)
-	}
-	if branchPart != "" {
-		leftParts = append(leftParts, sep, branchPart)
-	}
-	leftParts = append(leftParts, sep, schemePart)
-	leftParts = append(leftParts, sep, destPart)
-
-	leftContent := lipgloss.JoinHorizontal(lipgloss.Center, leftParts...)
-
-	// Status (right side)
-	status := s.renderStatus(styles, icons)
-
-	// Calculate spacing
-	leftWidth := lipgloss.Width(leftContent)
-	statusWidth := lipgloss.Width(status)
-	spacerWidth := maxInt(1, width-leftWidth-statusWidth-4)
-	spacer := strings.Repeat(" ", spacerWidth)
-
-	return lipgloss.JoinHorizontal(lipgloss.Center, leftContent, spacer, status)
+	return lipgloss.JoinHorizontal(lipgloss.Center, parts...)
 }
 
-// renderStatus renders the status indicator on the right
-func (s StatusBar) renderStatus(styles Styles, icons Icons) string {
+// renderRightSection renders status indicator (spinner or result)
+func (s StatusBar) renderRightSection(styles Styles, icons Icons) string {
 	if s.Running {
-		// Running status with spinner
-		icon := styles.StatusStyle("running").Render(s.Spinner.View())
+		// Running: spinner + phase name
+		spinnerView := styles.StatusStyle("running").Render(s.Spinner.View())
 
 		var labelParts []string
-		labelParts = append(labelParts, strings.ToUpper(s.RunningCmd))
-
 		if s.Stage != "" {
 			labelParts = append(labelParts, s.Stage)
-		}
-		if s.Progress != "" {
-			labelParts = append(labelParts, s.Progress)
+		} else {
+			labelParts = append(labelParts, strings.ToUpper(s.RunningCmd))
 		}
 
-		label := strings.Join(labelParts, " ")
-		labelStyle := lipgloss.NewStyle().
-			Foreground(styles.Colors.TextMuted)
+		labelStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent)
+		label := labelStyle.Render(strings.Join(labelParts, " "))
 
-		return icon + " " + labelStyle.Render(label)
+		return spinnerView + " " + label
 	}
 
-	// Build result + idle status
+	// Not running: show result or idle
 	var parts []string
 
-	// Error/warning counts: [✗ 3  ⚠ 2]
+	// Error/warning counts if any
 	if s.ErrorCount > 0 || s.WarningCount > 0 {
-		bracketStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
 		var countParts []string
-
 		if s.ErrorCount > 0 {
 			errStyle := styles.StatusStyle("error")
 			countParts = append(countParts, errStyle.Render(icons.Error+" "+itoa(s.ErrorCount)))
@@ -169,11 +251,9 @@ func (s StatusBar) renderStatus(styles Styles, icons Icons) string {
 			warnStyle := styles.StatusStyle("warning")
 			countParts = append(countParts, warnStyle.Render(icons.Warning+" "+itoa(s.WarningCount)))
 		}
-
-		counts := strings.Join(countParts, " ")
-		parts = append(parts, bracketStyle.Render("[")+counts+bracketStyle.Render("]"))
+		parts = append(parts, strings.Join(countParts, " "))
 	} else if s.HasLastResult {
-		// Last result indicator: [✓ 2.3s] or [✗] (only if no error counts)
+		// Last result: icon + duration
 		resultIcon := icons.Success
 		resultStatus := "success"
 		if !s.LastResultSuccess {
@@ -182,27 +262,26 @@ func (s StatusBar) renderStatus(styles Styles, icons Icons) string {
 		}
 
 		resultStyle := styles.StatusStyle(resultStatus)
-		resultText := resultStyle.Render(resultIcon)
+		resultPart := resultStyle.Render(resultIcon)
 		if s.LastResultTime != "" {
-			resultText += " " + lipgloss.NewStyle().Foreground(styles.Colors.TextMuted).Render(s.LastResultTime)
+			timeStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+			resultPart += " " + timeStyle.Render(s.LastResultTime)
 		}
-
-		bracketStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
-		parts = append(parts, bracketStyle.Render("[")+resultText+bracketStyle.Render("]"))
+		parts = append(parts, resultPart)
+	} else {
+		// Idle indicator
+		idleStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		parts = append(parts, idleStyle.Render(icons.Idle))
 	}
-
-	// Idle indicator
-	idleIcon := styles.StatusStyle("idle").Render(icons.Idle)
-	parts = append(parts, idleIcon)
 
 	return strings.Join(parts, " ")
 }
 
 // =============================================================================
-// Progress Bar - Visual progress indicator
+// Progress Bar - Simplified to just spinner + phase (rendered in status bar)
 // =============================================================================
 
-// ProgressBar renders a visual progress bar
+// ProgressBar is kept for backwards compatibility but mostly unused now
 type ProgressBar struct {
 	Visible bool
 	Label   string
@@ -232,54 +311,11 @@ func (p *ProgressBar) Hide() {
 	p.Visible = false
 }
 
-// View renders the progress bar
+// View renders nothing - progress is now shown in status bar
 func (p ProgressBar) View(width int, styles Styles) string {
-	if !p.Visible {
-		return ""
-	}
-
-	icons := styles.Icons
-
-	// Calculate progress percentage
-	percent := 0.0
-	if p.Total > 0 {
-		percent = float64(p.Current) / float64(p.Total)
-	}
-
-	// Progress bar width (leave room for label)
-	barWidth := maxInt(20, width-40)
-
-	// Build the bar
-	filledWidth := int(float64(barWidth) * percent)
-	emptyWidth := barWidth - filledWidth
-
-	filledStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Accent)
-	emptyStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.BorderMuted)
-
-	bar := filledStyle.Render(strings.Repeat("█", filledWidth)) +
-		emptyStyle.Render(strings.Repeat("░", emptyWidth))
-
-	// Stage label
-	stageStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Text)
-	stagePart := ""
-	if p.Stage != "" {
-		stagePart = stageStyle.Render(icons.ChevronRight + " " + p.Stage)
-	}
-
-	// Progress count
-	countStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextMuted)
-	countPart := ""
-	if p.Total > 0 {
-		countPart = countStyle.Render("(" + itoa(p.Current) + "/" + itoa(p.Total) + ")")
-	}
-
-	// Combine
-	return lipgloss.JoinHorizontal(lipgloss.Center,
-		stagePart, "  ", bar, "  ", countPart)
+	// Progress is now integrated into the status bar as spinner + phase
+	// This method returns empty string - we keep it for API compatibility
+	return ""
 }
 
 // itoa converts int to string (simple version)
@@ -335,31 +371,8 @@ func DefaultHints() []HintItem {
 		{Key: "t", Desc: "test"},
 		{Key: "s", Desc: "scheme"},
 		{Key: "d", Desc: "dest"},
-		{Key: "^K", Desc: "commands"},
-		{Key: "?", Desc: "help"},
-	}
-}
-
-// IssuesFocusedHints returns hints when issues panel is focused
-func IssuesFocusedHints() []HintItem {
-	return []HintItem{
-		{Key: "j/k", Desc: "navigate"},
-		{Key: "⏎", Desc: "expand"},
-		{Key: "o", Desc: "open"},
-		{Key: "tab", Desc: "logs"},
-		{Key: "e", Desc: "hide"},
-		{Key: "?", Desc: "help"},
-	}
-}
-
-// NormalWithIssuesHints returns hints for normal mode when issues exist
-func NormalWithIssuesHints() []HintItem {
-	return []HintItem{
-		{Key: "b", Desc: "build"},
-		{Key: "r", Desc: "run"},
-		{Key: "t", Desc: "test"},
-		{Key: "e", Desc: "errors"},
-		{Key: "^K", Desc: "commands"},
+		{Key: "n", Desc: "next err"},
+		{Key: "^K", Desc: "palette"},
 		{Key: "?", Desc: "help"},
 	}
 }
@@ -369,37 +382,27 @@ func (h HintsBar) View(width int, styles Styles) string {
 	return h.renderHints(h.Hints, styles)
 }
 
-// ViewWithContext renders hints based on context
+// ViewWithContext renders hints based on context (kept for API compatibility)
 func (h HintsBar) ViewWithContext(width int, styles Styles, issuesFocused bool, hasIssues bool) string {
-	var hints []HintItem
-
-	if issuesFocused {
-		hints = IssuesFocusedHints()
-	} else if hasIssues {
-		hints = NormalWithIssuesHints()
-	} else {
-		hints = DefaultHints()
-	}
-
-	return h.renderHints(hints, styles)
+	// With issues panel removed, always use default hints
+	return h.renderHints(DefaultHints(), styles)
 }
 
 func (h HintsBar) renderHints(hints []HintItem, styles Styles) string {
 	var parts []string
 
 	keyStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.Accent)
+		Foreground(styles.Colors.Accent).
+		Bold(true)
 	descStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.TextSubtle)
-	sepStyle := lipgloss.NewStyle().
-		Foreground(styles.Colors.BorderMuted)
+		Foreground(styles.Colors.TextMuted)
 
 	for i, hint := range hints {
 		part := keyStyle.Render(hint.Key) + ":" + descStyle.Render(hint.Desc)
 		parts = append(parts, part)
 
 		if i < len(hints)-1 {
-			parts = append(parts, sepStyle.Render("  "))
+			parts = append(parts, "  ")
 		}
 	}
 

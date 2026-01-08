@@ -13,6 +13,7 @@ const (
 	ModePalette
 	ModeHelp
 	ModeWizard
+	ModeSearch // New search mode
 )
 
 // SelectorType represents what the selector is selecting
@@ -46,18 +47,28 @@ type keyMap struct {
 	Init    key.Binding
 	Refresh key.Binding
 
-	// Layout
-	Search key.Binding
+	// Search & Navigation
+	Search         key.Binding
+	NextError      key.Binding
+	PrevError      key.Binding
+	OpenXcode      key.Binding
+	OpenEditor     key.Binding
+	ToggleRawView  key.Binding
+	ToggleCollapse key.Binding
+	ExpandAll      key.Binding
+	CollapseAll    key.Binding
 
-	// Viewport/Scroll
-	ScrollUp         key.Binding
-	ScrollDown       key.Binding
-	ScrollTop        key.Binding
-	ScrollBottom     key.Binding
-	PageUp           key.Binding
-	PageDown         key.Binding
-	HalfPageUp       key.Binding
-	HalfPageDown     key.Binding
+	// Viewport/Scroll (arrow keys only, no vim keys)
+	ScrollUp     key.Binding
+	ScrollDown   key.Binding
+	ScrollTop    key.Binding
+	ScrollBottom key.Binding
+	PageUp       key.Binding
+	PageDown     key.Binding
+	HalfPageUp   key.Binding
+	HalfPageDown key.Binding
+
+	// Keep for backwards compatibility but repurposed
 	ToggleAutoFollow key.Binding
 
 	// Selector navigation (used when in selector/palette mode)
@@ -65,10 +76,8 @@ type keyMap struct {
 	SelectDown  key.Binding
 	SelectEnter key.Binding
 
-	// Issues panel navigation
-	ToggleIssues key.Binding
-	FocusIssues  key.Binding
-	OpenInEditor key.Binding
+	// Run mode split view
+	SwitchPane key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -133,35 +142,67 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("^R", "refresh"),
 		),
 
-		// Layout
+		// Search & Navigation
 		Search: key.NewBinding(
-			key.WithKeys("ctrl+f", "/"),
-			key.WithHelp("^F", "search logs"),
+			key.WithKeys("/"),
+			key.WithHelp("/", "search logs"),
+		),
+		NextError: key.NewBinding(
+			key.WithKeys("n"),
+			key.WithHelp("n", "next error"),
+		),
+		PrevError: key.NewBinding(
+			key.WithKeys("N"),
+			key.WithHelp("N", "prev error"),
+		),
+		OpenXcode: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "open in Xcode"),
+		),
+		OpenEditor: key.NewBinding(
+			key.WithKeys("O"),
+			key.WithHelp("O", "open in $EDITOR"),
+		),
+		ToggleRawView: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "toggle raw/grouped view"),
+		),
+		ToggleCollapse: key.NewBinding(
+			key.WithKeys("enter", " "),
+			key.WithHelp("enter", "toggle phase collapse"),
+		),
+		ExpandAll: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "expand all phases"),
+		),
+		CollapseAll: key.NewBinding(
+			key.WithKeys("E"),
+			key.WithHelp("E", "collapse all phases"),
 		),
 
-		// Viewport/Scroll
+		// Viewport/Scroll - arrow keys only (no vim j/k)
 		ScrollUp: key.NewBinding(
-			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "scroll up"),
+			key.WithKeys("up"),
+			key.WithHelp("↑", "scroll up"),
 		),
 		ScrollDown: key.NewBinding(
-			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "scroll down"),
+			key.WithKeys("down"),
+			key.WithHelp("↓", "scroll down"),
 		),
 		ScrollTop: key.NewBinding(
-			key.WithKeys("g", "home"),
-			key.WithHelp("g", "top"),
+			key.WithKeys("home"),
+			key.WithHelp("home", "top"),
 		),
 		ScrollBottom: key.NewBinding(
-			key.WithKeys("G", "end"),
-			key.WithHelp("G", "bottom"),
+			key.WithKeys("end"),
+			key.WithHelp("end", "bottom"),
 		),
 		PageUp: key.NewBinding(
-			key.WithKeys("pgup", "ctrl+b"),
+			key.WithKeys("pgup"),
 			key.WithHelp("PgUp", "page up"),
 		),
 		PageDown: key.NewBinding(
-			key.WithKeys("pgdown", "ctrl+f"),
+			key.WithKeys("pgdown"),
 			key.WithHelp("PgDn", "page down"),
 		),
 		HalfPageUp: key.NewBinding(
@@ -172,9 +213,10 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("ctrl+d"),
 			key.WithHelp("^D", "half page down"),
 		),
+		// Repurposed: now toggles raw/grouped view
 		ToggleAutoFollow: key.NewBinding(
 			key.WithKeys("f"),
-			key.WithHelp("f", "follow logs"),
+			key.WithHelp("f", "toggle view"),
 		),
 
 		// Selector navigation
@@ -188,21 +230,13 @@ func defaultKeyMap() keyMap {
 		),
 		SelectEnter: key.NewBinding(
 			key.WithKeys("enter"),
-			key.WithHelp("⏎", "select"),
+			key.WithHelp("enter", "select"),
 		),
 
-		// Issues panel navigation
-		ToggleIssues: key.NewBinding(
-			key.WithKeys("e"),
-			key.WithHelp("e", "toggle errors"),
-		),
-		FocusIssues: key.NewBinding(
+		// Run mode split view
+		SwitchPane: key.NewBinding(
 			key.WithKeys("tab"),
-			key.WithHelp("tab", "focus errors"),
-		),
-		OpenInEditor: key.NewBinding(
-			key.WithKeys("o"),
-			key.WithHelp("o", "open in editor"),
+			key.WithHelp("tab", "switch pane"),
 		),
 	}
 }
@@ -215,14 +249,16 @@ func (k keyMap) ShortHelp() []key.Binding {
 // FullHelp returns all bindings grouped for full help view
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		// Actions row
+		// Actions
 		{k.Build, k.Run, k.Test, k.Clean, k.Stop},
-		// Configuration row
-		{k.Scheme, k.Destination, k.Palette, k.Init},
-		// Scrolling row
-		{k.ScrollUp, k.ScrollDown, k.ScrollTop, k.ScrollBottom, k.ToggleAutoFollow},
-		// Other row
-		{k.Refresh, k.Search, k.Cancel, k.Help, k.Quit},
+		// Configuration
+		{k.Scheme, k.Destination, k.Palette, k.Init, k.Refresh},
+		// View controls
+		{k.ToggleRawView, k.ToggleCollapse, k.ExpandAll, k.CollapseAll},
+		// Scrolling
+		{k.ScrollUp, k.ScrollDown, k.PageUp, k.PageDown, k.ScrollTop, k.ScrollBottom},
+		// Navigation & Other
+		{k.Search, k.NextError, k.PrevError, k.OpenXcode, k.OpenEditor, k.Help, k.Quit},
 	}
 }
 
@@ -245,5 +281,5 @@ func (k keyMap) ActionHints() []struct {
 
 // FooterHints returns the hints for the footer bar
 func (k keyMap) FooterHints() string {
-	return "b:build  r:run  t:test  s:scheme  d:dest  ^K:commands  ?:help"
+	return "b:build  r:run  t:test  s:scheme  d:dest  ^K:palette  ?:help"
 }

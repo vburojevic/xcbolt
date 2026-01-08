@@ -8,13 +8,14 @@ import (
 )
 
 // =============================================================================
-// Color Palette - Pastel Theme
+// Color Palette - Monochrome + Blue Accent
 // =============================================================================
 
 // Colors defines the complete color palette with light/dark mode support
 type Colors struct {
-	// Primary accent color
-	Accent lipgloss.AdaptiveColor
+	// Primary accent color - Blue
+	Accent      lipgloss.AdaptiveColor
+	AccentMuted lipgloss.AdaptiveColor
 
 	// Semantic colors
 	Success lipgloss.AdaptiveColor
@@ -25,8 +26,9 @@ type Colors struct {
 	// Background colors
 	Background lipgloss.AdaptiveColor
 	Surface    lipgloss.AdaptiveColor
+	Overlay    lipgloss.AdaptiveColor
 
-	// Text colors
+	// Text colors - Monochrome grays
 	Text       lipgloss.AdaptiveColor
 	TextMuted  lipgloss.AdaptiveColor
 	TextSubtle lipgloss.AdaptiveColor
@@ -36,30 +38,32 @@ type Colors struct {
 	BorderMuted lipgloss.AdaptiveColor
 }
 
-// DefaultColors returns the pastel color palette
+// DefaultColors returns the monochrome + blue accent color palette
 func DefaultColors() Colors {
 	return Colors{
-		// Soft sky blue accent
-		Accent: lipgloss.AdaptiveColor{Light: "#5BA4E0", Dark: "#A8D8FF"},
+		// Blue accent - primary interactive color
+		Accent:      lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#3B82F6"},
+		AccentMuted: lipgloss.AdaptiveColor{Light: "#3B82F6", Dark: "#1D4ED8"},
 
-		// Semantic pastel colors
-		Success: lipgloss.AdaptiveColor{Light: "#4CAF7D", Dark: "#A8E6CF"}, // Mint green
-		Warning: lipgloss.AdaptiveColor{Light: "#E6A23C", Dark: "#FFE5B4"}, // Peach
-		Error:   lipgloss.AdaptiveColor{Light: "#E57373", Dark: "#FFB5B5"}, // Soft coral
-		Running: lipgloss.AdaptiveColor{Light: "#9575CD", Dark: "#D4B8FF"}, // Soft lavender
+		// Semantic colors - muted, professional tones
+		Success: lipgloss.AdaptiveColor{Light: "#059669", Dark: "#10B981"}, // Emerald
+		Warning: lipgloss.AdaptiveColor{Light: "#D97706", Dark: "#F59E0B"}, // Amber
+		Error:   lipgloss.AdaptiveColor{Light: "#DC2626", Dark: "#EF4444"}, // Red
+		Running: lipgloss.AdaptiveColor{Light: "#2563EB", Dark: "#3B82F6"}, // Same as accent
 
-		// Backgrounds
-		Background: lipgloss.AdaptiveColor{Light: "#FAFAFA", Dark: "#1A1A2E"}, // Deep navy / off-white
-		Surface:    lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#252542"}, // Muted purple-gray
+		// Backgrounds - clean monochrome
+		Background: lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#111827"}, // White / Gray-900
+		Surface:    lipgloss.AdaptiveColor{Light: "#F9FAFB", Dark: "#1F2937"}, // Gray-50 / Gray-800
+		Overlay:    lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#374151"}, // Gray-100 / Gray-700
 
-		// Text
-		Text:       lipgloss.AdaptiveColor{Light: "#2D2D3A", Dark: "#E8E8F0"},
-		TextMuted:  lipgloss.AdaptiveColor{Light: "#6B6B8D", Dark: "#9E9EB0"},
-		TextSubtle: lipgloss.AdaptiveColor{Light: "#9E9EB0", Dark: "#6B6B8D"},
+		// Text - clear hierarchy
+		Text:       lipgloss.AdaptiveColor{Light: "#111827", Dark: "#F9FAFB"}, // Gray-900 / Gray-50
+		TextMuted:  lipgloss.AdaptiveColor{Light: "#6B7280", Dark: "#9CA3AF"}, // Gray-500 / Gray-400
+		TextSubtle: lipgloss.AdaptiveColor{Light: "#9CA3AF", Dark: "#6B7280"}, // Gray-400 / Gray-500
 
-		// Borders
-		Border:      lipgloss.AdaptiveColor{Light: "#E0E0E0", Dark: "#3D3D5C"},
-		BorderMuted: lipgloss.AdaptiveColor{Light: "#EEEEEE", Dark: "#2D2D4A"},
+		// Borders - subtle
+		Border:      lipgloss.AdaptiveColor{Light: "#E5E7EB", Dark: "#374151"}, // Gray-200 / Gray-700
+		BorderMuted: lipgloss.AdaptiveColor{Light: "#F3F4F6", Dark: "#1F2937"}, // Gray-100 / Gray-800
 	}
 }
 
@@ -89,6 +93,8 @@ type Icons struct {
 	ChevronDown  string
 	ChevronRight string
 	ArrowRight   string
+	Collapsed    string
+	Expanded     string
 
 	// UI icons
 	Search   string
@@ -105,6 +111,12 @@ type Icons struct {
 	Cross     string
 	Spinner   string
 	Separator string
+
+	// Log phases
+	Compile string
+	Link    string
+	Sign    string
+	Copy    string
 }
 
 // NerdFontIcons returns icons using Nerd Font glyphs
@@ -130,6 +142,8 @@ func NerdFontIcons() Icons {
 		ChevronDown:  "\uf078", //  (nf-fa-chevron_down)
 		ChevronRight: "\uf054", //  (nf-fa-chevron_right)
 		ArrowRight:   "\uf061", //  (nf-fa-arrow_right)
+		Collapsed:    "\uf054", //  (nf-fa-chevron_right)
+		Expanded:     "\uf078", //  (nf-fa-chevron_down)
 
 		// UI
 		Search:   "\uf002", //  (nf-fa-search)
@@ -146,6 +160,12 @@ func NerdFontIcons() Icons {
 		Cross:     "\uf00d", //
 		Spinner:   "⠋",      // Braille spinner frame
 		Separator: "│",
+
+		// Log phases
+		Compile: "\uf121", //  (nf-fa-code)
+		Link:    "\uf0c1", //  (nf-fa-link)
+		Sign:    "\uf023", //  (nf-fa-lock)
+		Copy:    "\uf0c5", //  (nf-fa-copy)
 	}
 }
 
@@ -161,20 +181,22 @@ func UnicodeIcons() Icons {
 		Paused:  "◉",
 
 		// Actions
-		Build:   "🔨",
+		Build:   "⚒",
 		Run:     "▶",
 		Test:    "⚗",
-		Clean:   "🗑",
+		Clean:   "⌫",
 		Stop:    "■",
-		Archive: "📦",
+		Archive: "▣",
 
 		// Navigation
 		ChevronDown:  "▾",
 		ChevronRight: "▸",
 		ArrowRight:   "→",
+		Collapsed:    "▸",
+		Expanded:     "▾",
 
 		// UI
-		Search:   "🔍",
+		Search:   "⌕",
 		Settings: "⚙",
 		Help:     "?",
 		Command:  "⌘",
@@ -188,6 +210,12 @@ func UnicodeIcons() Icons {
 		Cross:     "✗",
 		Spinner:   "◐",
 		Separator: "│",
+
+		// Log phases
+		Compile: "⟨⟩",
+		Link:    "⛓",
+		Sign:    "🔒",
+		Copy:    "⧉",
 	}
 }
 
@@ -204,6 +232,7 @@ func DetectNerdFont() bool {
 		"Alacritty",
 		"kitty",
 		"Hyper",
+		"Ghostty",
 	}
 
 	for _, t := range nerdFontTerminals {
@@ -220,8 +249,8 @@ func DetectNerdFont() bool {
 		return false
 	}
 
-	// Default to Unicode fallback for safety
-	return false
+	// Default to Nerd Font - most modern terminals support it
+	return true
 }
 
 // GetIcons returns the appropriate icon set based on environment
@@ -242,59 +271,73 @@ type Styles struct {
 	Icons  Icons
 
 	// Layout components
-	Header     HeaderStyles
-	ActionBar  ActionBarStyles
-	Logs       LogsStyles
-	ResultsBar ResultsBarStyles
-	Popup      PopupStyles
-	Selector   SelectorStyles
-	Help       HelpStyles
+	StatusBar StatusBarStyles
+	Logs      LogsStyles
+	HintsBar  HintsBarStyles
+	Popup     PopupStyles
+	Selector  SelectorStyles
+	Help      HelpStyles
+	Search    SearchStyles
 }
 
-// HeaderStyles for the top header bar
-type HeaderStyles struct {
+// StatusBarStyles for the top status bar
+type StatusBarStyles struct {
 	Container   lipgloss.Style
-	Brand       lipgloss.Style
-	Selector    lipgloss.Style
-	SelectorKey lipgloss.Style
-	Status      lipgloss.Style
+	Section     lipgloss.Style
+	Label       lipgloss.Style
+	Value       lipgloss.Style
+	ValueMuted  lipgloss.Style
+	Separator   lipgloss.Style
 	StatusIcon  lipgloss.Style
-}
-
-// ActionBarStyles for the action buttons row
-type ActionBarStyles struct {
-	Container  lipgloss.Style
-	Action     lipgloss.Style
-	ActionKey  lipgloss.Style
-	ActionText lipgloss.Style
-	Separator  lipgloss.Style
+	SpinnerText lipgloss.Style
 }
 
 // LogsStyles for the scrollable log viewport
 type LogsStyles struct {
-	Container  lipgloss.Style
+	Container lipgloss.Style
+
+	// Phase groups
+	PhaseHeader          lipgloss.Style
+	PhaseHeaderCollapsed lipgloss.Style
+	PhaseIcon            lipgloss.Style
+	PhaseCount           lipgloss.Style
+
+	// Log lines
 	Line       lipgloss.Style
+	LineError  lipgloss.Style
+	LineWarn   lipgloss.Style
 	LineNumber lipgloss.Style
-	Timestamp  lipgloss.Style
-	StatusIcon lipgloss.Style
+
+	// Inline errors/warnings
+	ErrorIcon   lipgloss.Style
+	ErrorText   lipgloss.Style
+	WarningIcon lipgloss.Style
+	WarningText lipgloss.Style
+
+	// Test results
+	TestPass lipgloss.Style
+	TestFail lipgloss.Style
+	TestSkip lipgloss.Style
+
+	// Search highlighting
+	SearchMatch lipgloss.Style
+
+	// Empty state
 	EmptyState lipgloss.Style
 }
 
-// ResultsBarStyles for the bottom results/status bar
-type ResultsBarStyles struct {
+// HintsBarStyles for the bottom hints bar
+type HintsBarStyles struct {
 	Container lipgloss.Style
-	Result    lipgloss.Style
-	Icon      lipgloss.Style
-	Duration  lipgloss.Style
-	Hints     lipgloss.Style
-	HintKey   lipgloss.Style
+	Key       lipgloss.Style
+	Desc      lipgloss.Style
+	Separator lipgloss.Style
 }
 
 // PopupStyles for centered modal popups
 type PopupStyles struct {
 	Container lipgloss.Style
 	Title     lipgloss.Style
-	Border    lipgloss.Style
 	Content   lipgloss.Style
 }
 
@@ -314,10 +357,23 @@ type SelectorStyles struct {
 // HelpStyles for help overlay
 type HelpStyles struct {
 	Container lipgloss.Style
+	Title     lipgloss.Style
 	Group     lipgloss.Style
+	GroupName lipgloss.Style
 	Key       lipgloss.Style
 	Desc      lipgloss.Style
 	Separator lipgloss.Style
+}
+
+// SearchStyles for log search mode
+type SearchStyles struct {
+	Container   lipgloss.Style
+	Prompt      lipgloss.Style
+	Input       lipgloss.Style
+	InputCursor lipgloss.Style
+	Match       lipgloss.Style
+	MatchCount  lipgloss.Style
+	NoMatch     lipgloss.Style
 }
 
 // DefaultStyles returns the complete style configuration
@@ -329,62 +385,45 @@ func DefaultStyles() Styles {
 		Colors: colors,
 		Icons:  icons,
 
-		Header:     defaultHeaderStyles(colors),
-		ActionBar:  defaultActionBarStyles(colors),
-		Logs:       defaultLogsStyles(colors),
-		ResultsBar: defaultResultsBarStyles(colors),
-		Popup:      defaultPopupStyles(colors),
-		Selector:   defaultSelectorStyles(colors),
-		Help:       defaultHelpStyles(colors),
+		StatusBar: defaultStatusBarStyles(colors),
+		Logs:      defaultLogsStyles(colors),
+		HintsBar:  defaultHintsBarStyles(colors),
+		Popup:     defaultPopupStyles(colors),
+		Selector:  defaultSelectorStyles(colors),
+		Help:      defaultHelpStyles(colors),
+		Search:    defaultSearchStyles(colors),
 	}
 }
 
-func defaultHeaderStyles(c Colors) HeaderStyles {
-	return HeaderStyles{
+func defaultStatusBarStyles(c Colors) StatusBarStyles {
+	return StatusBarStyles{
 		Container: lipgloss.NewStyle().
 			Padding(0, 1).
 			BorderStyle(lipgloss.Border{Bottom: "─"}).
 			BorderForeground(c.Border).
 			BorderBottom(true),
 
-		Brand: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(c.Text),
-
-		Selector: lipgloss.NewStyle().
-			Foreground(c.Text).
+		Section: lipgloss.NewStyle().
 			Padding(0, 1),
 
-		SelectorKey: lipgloss.NewStyle().
-			Foreground(c.Accent),
-
-		Status: lipgloss.NewStyle().
+		Label: lipgloss.NewStyle().
 			Foreground(c.TextMuted),
 
-		StatusIcon: lipgloss.NewStyle(),
-	}
-}
+		Value: lipgloss.NewStyle().
+			Foreground(c.Text),
 
-func defaultActionBarStyles(c Colors) ActionBarStyles {
-	return ActionBarStyles{
-		Container: lipgloss.NewStyle().
-			Padding(0, 1).
-			BorderStyle(lipgloss.Border{Bottom: "─"}).
-			BorderForeground(c.BorderMuted).
-			BorderBottom(true),
-
-		Action: lipgloss.NewStyle().
-			Padding(0, 1),
-
-		ActionKey: lipgloss.NewStyle().
-			Foreground(c.Accent).
-			Bold(true),
-
-		ActionText: lipgloss.NewStyle().
+		ValueMuted: lipgloss.NewStyle().
 			Foreground(c.TextMuted),
 
 		Separator: lipgloss.NewStyle().
-			Foreground(c.BorderMuted),
+			Foreground(c.Border).
+			SetString("│").
+			Padding(0, 1),
+
+		StatusIcon: lipgloss.NewStyle(),
+
+		SpinnerText: lipgloss.NewStyle().
+			Foreground(c.Accent),
 	}
 }
 
@@ -393,47 +432,93 @@ func defaultLogsStyles(c Colors) LogsStyles {
 		Container: lipgloss.NewStyle().
 			Padding(0, 1),
 
+		// Phase headers
+		PhaseHeader: lipgloss.NewStyle().
+			Foreground(c.Text).
+			Bold(true).
+			Padding(0, 0, 0, 0),
+
+		PhaseHeaderCollapsed: lipgloss.NewStyle().
+			Foreground(c.TextMuted).
+			Padding(0, 0, 0, 0),
+
+		PhaseIcon: lipgloss.NewStyle().
+			Foreground(c.Accent).
+			MarginRight(1),
+
+		PhaseCount: lipgloss.NewStyle().
+			Foreground(c.TextMuted),
+
+		// Log lines
 		Line: lipgloss.NewStyle().
 			Foreground(c.Text),
+
+		LineError: lipgloss.NewStyle().
+			Foreground(c.Error),
+
+		LineWarn: lipgloss.NewStyle().
+			Foreground(c.Warning),
 
 		LineNumber: lipgloss.NewStyle().
 			Foreground(c.TextSubtle).
 			Width(4).
 			Align(lipgloss.Right),
 
-		Timestamp: lipgloss.NewStyle().
-			Foreground(c.TextSubtle),
+		// Inline errors/warnings
+		ErrorIcon: lipgloss.NewStyle().
+			Foreground(c.Error).
+			Bold(true),
 
-		StatusIcon: lipgloss.NewStyle(),
+		ErrorText: lipgloss.NewStyle().
+			Foreground(c.Error),
 
+		WarningIcon: lipgloss.NewStyle().
+			Foreground(c.Warning).
+			Bold(true),
+
+		WarningText: lipgloss.NewStyle().
+			Foreground(c.Warning),
+
+		// Test results
+		TestPass: lipgloss.NewStyle().
+			Foreground(c.Success),
+
+		TestFail: lipgloss.NewStyle().
+			Foreground(c.Error),
+
+		TestSkip: lipgloss.NewStyle().
+			Foreground(c.TextMuted),
+
+		// Search highlighting
+		SearchMatch: lipgloss.NewStyle().
+			Background(c.Accent).
+			Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#FFFFFF"}),
+
+		// Empty state
 		EmptyState: lipgloss.NewStyle().
 			Foreground(c.TextMuted).
-			Italic(true).
 			Align(lipgloss.Center),
 	}
 }
 
-func defaultResultsBarStyles(c Colors) ResultsBarStyles {
-	return ResultsBarStyles{
+func defaultHintsBarStyles(c Colors) HintsBarStyles {
+	return HintsBarStyles{
 		Container: lipgloss.NewStyle().
 			Padding(0, 1).
 			BorderStyle(lipgloss.Border{Top: "─"}).
 			BorderForeground(c.Border).
 			BorderTop(true),
 
-		Result: lipgloss.NewStyle().
-			Foreground(c.Text),
+		Key: lipgloss.NewStyle().
+			Foreground(c.Accent).
+			Bold(true),
 
-		Icon: lipgloss.NewStyle(),
-
-		Duration: lipgloss.NewStyle().
+		Desc: lipgloss.NewStyle().
 			Foreground(c.TextMuted),
 
-		Hints: lipgloss.NewStyle().
-			Foreground(c.TextSubtle),
-
-		HintKey: lipgloss.NewStyle().
-			Foreground(c.Accent),
+		Separator: lipgloss.NewStyle().
+			Foreground(c.Border).
+			SetString("  "),
 	}
 }
 
@@ -448,9 +533,6 @@ func defaultPopupStyles(c Colors) PopupStyles {
 			Bold(true).
 			Foreground(c.Text).
 			MarginBottom(1),
-
-		Border: lipgloss.NewStyle().
-			BorderForeground(c.Border),
 
 		Content: lipgloss.NewStyle().
 			Foreground(c.Text),
@@ -505,8 +587,18 @@ func defaultHelpStyles(c Colors) HelpStyles {
 			BorderForeground(c.Border).
 			Padding(1, 2),
 
+		Title: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(c.Text).
+			MarginBottom(1),
+
 		Group: lipgloss.NewStyle().
 			MarginBottom(1),
+
+		GroupName: lipgloss.NewStyle().
+			Foreground(c.TextMuted).
+			Bold(true).
+			MarginBottom(0),
 
 		Key: lipgloss.NewStyle().
 			Foreground(c.Accent).
@@ -518,6 +610,36 @@ func defaultHelpStyles(c Colors) HelpStyles {
 
 		Separator: lipgloss.NewStyle().
 			Foreground(c.BorderMuted),
+	}
+}
+
+func defaultSearchStyles(c Colors) SearchStyles {
+	return SearchStyles{
+		Container: lipgloss.NewStyle().
+			Padding(0, 1).
+			BorderStyle(lipgloss.Border{Top: "─"}).
+			BorderForeground(c.Accent).
+			BorderTop(true),
+
+		Prompt: lipgloss.NewStyle().
+			Foreground(c.Accent).
+			Bold(true),
+
+		Input: lipgloss.NewStyle().
+			Foreground(c.Text),
+
+		InputCursor: lipgloss.NewStyle().
+			Foreground(c.Accent),
+
+		Match: lipgloss.NewStyle().
+			Background(c.Accent).
+			Foreground(lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#FFFFFF"}),
+
+		MatchCount: lipgloss.NewStyle().
+			Foreground(c.TextMuted),
+
+		NoMatch: lipgloss.NewStyle().
+			Foreground(c.Error),
 	}
 }
 
@@ -558,67 +680,5 @@ func (s Styles) StatusIcon(status string) string {
 		return s.Icons.Paused
 	default:
 		return s.Icons.Dot
-	}
-}
-
-// =============================================================================
-// Legacy compatibility - to be removed after full migration
-// =============================================================================
-
-// styleSet is the legacy style struct - kept for gradual migration
-type styleSet struct {
-	Header      lipgloss.Style
-	Brand       lipgloss.Style
-	Meta        lipgloss.Style
-	TabActive   lipgloss.Style
-	TabInactive lipgloss.Style
-	Panel       lipgloss.Style
-	PanelTitle  lipgloss.Style
-	Muted       lipgloss.Style
-	OK          lipgloss.Style
-	Warn        lipgloss.Style
-	Err         lipgloss.Style
-	Toast       lipgloss.Style
-}
-
-// defaultStyles returns the legacy style set for backwards compatibility
-func defaultStyles() styleSet {
-	c := DefaultColors()
-	return styleSet{
-		Header: lipgloss.NewStyle().
-			Padding(0, 1).
-			Border(lipgloss.Border{Bottom: "─"}).
-			BorderForeground(c.Border),
-		Brand: lipgloss.NewStyle().
-			Bold(true).
-			Foreground(c.Text),
-		Meta: lipgloss.NewStyle().
-			Foreground(c.TextMuted),
-		TabActive: lipgloss.NewStyle().
-			Bold(true).
-			Padding(0, 1).
-			Border(lipgloss.Border{Bottom: "━"}).
-			BorderForeground(c.Accent),
-		TabInactive: lipgloss.NewStyle().
-			Padding(0, 1).
-			Foreground(c.TextMuted),
-		Panel: lipgloss.NewStyle().
-			Padding(1, 2).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(c.Border),
-		PanelTitle: lipgloss.NewStyle().
-			Bold(true),
-		Muted: lipgloss.NewStyle().
-			Foreground(c.TextMuted),
-		OK: lipgloss.NewStyle().
-			Foreground(c.Success),
-		Warn: lipgloss.NewStyle().
-			Foreground(c.Warning),
-		Err: lipgloss.NewStyle().
-			Foreground(c.Error),
-		Toast: lipgloss.NewStyle().
-			Padding(0, 1).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(c.Border),
 	}
 }

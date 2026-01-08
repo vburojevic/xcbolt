@@ -12,11 +12,32 @@ import (
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/xcbolt/xcbolt/internal/core"
 )
+
+// =============================================================================
+// Run Mode Split View Types
+// =============================================================================
+
+// Pane identifies which pane has focus in split view
+type Pane int
+
+const (
+	PaneBuild   Pane = iota // Build logs pane (top)
+	PaneConsole             // Console output pane (bottom)
+)
+
+// RunModeState tracks the state for run mode split view
+type RunModeState struct {
+	Active      bool      // Whether run mode split view is active
+	ConsoleLogs []string  // App console output (separate from build logs)
+	FocusPane   Pane      // Which pane has focus
+	ConsolePos  int       // Scroll position for console pane
+}
 
 // =============================================================================
 // Messages
@@ -94,23 +115,24 @@ type Model struct {
 	hintsBar    HintsBar
 
 	// Components
-	spinner     spinner.Model
-	viewport    viewport.Model
-	wizard      wizardModel
-	selector    SelectorModel
-	palette     PaletteModel
-	issuesPanel IssuesPanel
-
-	// Issues panel state
-	showIssues    bool
-	issuesFocused bool
+	spinner  spinner.Model
+	viewport viewport.Model
+	wizard   wizardModel
+	selector SelectorModel
+	palette  PaletteModel
 
 	// Status message (shown in results bar)
 	statusMsg string
 
-	// Logs
-	logLines   []string
-	autoFollow bool
+	// Logs - grouped phase view with collapsible sections
+	phaseView PhaseView
+
+	// Search state
+	searchInput    textinput.Model
+	searchQuery    string
+	searchMatches  []SearchMatch
+	searchCursor   int
+	searchActive   bool
 
 	// Operation state
 	running    bool
@@ -131,6 +153,9 @@ type Model struct {
 	lastRun    core.RunResult
 	lastTest   core.TestResult
 	lastErr    string
+
+	// Run mode split view
+	runMode RunModeState
 }
 
 // NewModel creates a new TUI model
@@ -152,7 +177,12 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 	statusBar := NewStatusBar()
 	progressBar := NewProgressBar()
 	hintsBar := NewHintsBar()
-	issuesPanel := NewIssuesPanel()
+
+	// Initialize search input
+	si := textinput.New()
+	si.Placeholder = "Search logs..."
+	si.CharLimit = 100
+	si.Width = 40
 
 	return Model{
 		projectRoot: projectRoot,
@@ -163,8 +193,8 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		help:        h,
 		spinner:     sp,
 		viewport:    vp,
-		logLines:    []string{},
-		autoFollow:  true,
+		phaseView:   NewPhaseView(),
+		searchInput: si,
 		mode:        ModeNormal,
 		state:       state,
 		// Layout components
@@ -172,7 +202,6 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		statusBar:   statusBar,
 		progressBar: progressBar,
 		hintsBar:    hintsBar,
-		issuesPanel: issuesPanel,
 	}
 }
 
@@ -307,10 +336,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		ev := core.Event(msg)
 		m.handleEvent(ev)
-		m.viewport.SetContent(strings.Join(m.logLines, "\n"))
-		if m.autoFollow {
-			m.viewport.GotoBottom()
-		}
+		// PhaseView handles its own auto-scroll
 		if m.eventCh != nil {
 			cmds = append(cmds, waitForEvent(m.eventCh))
 		}
@@ -330,17 +356,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(string(msg))
 	}
 
-	// Viewport scrolling (only in normal mode and not focused on issues)
-	if m.mode == ModeNormal && !m.issuesFocused {
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-
-		// Check if user scrolled up manually
-		if m.viewport.AtBottom() {
-			m.autoFollow = true
-		}
-	}
+	// PhaseView scrolling is handled through key bindings in handleNormalModeKey
 
 	return m, tea.Batch(cmds...)
 }
@@ -516,6 +532,8 @@ func (m *Model) updateViewportSize() {
 	// Use new layout calculations
 	m.viewport.Width = maxInt(0, m.layout.ContentWidth()-2)
 	m.viewport.Height = maxInt(0, m.layout.ContentHeight()-2)
+	// Update PhaseView dimensions
+	m.phaseView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
 }
 
 // syncStatusBarState syncs the status bar display with current model state
@@ -540,9 +558,9 @@ func (m *Model) syncStatusBarState() {
 	m.statusBar.Stage = m.currentStage
 	m.statusBar.Progress = m.stageProgress
 
-	// Error/warning counts
-	m.statusBar.ErrorCount = m.issuesPanel.ErrorCount()
-	m.statusBar.WarningCount = m.issuesPanel.WarningCount()
+	// Error/warning counts from PhaseView
+	m.statusBar.ErrorCount = m.phaseView.ErrorCount()
+	m.statusBar.WarningCount = m.phaseView.WarningCount()
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
@@ -590,28 +608,24 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	// Issues panel focused - handle navigation
-	if m.issuesFocused && m.showIssues {
-		switch {
-		case keyMatches(msg, m.keys.ScrollUp):
-			m.issuesPanel.MoveUp()
-			return nil
-		case keyMatches(msg, m.keys.ScrollDown):
-			m.issuesPanel.MoveDown()
-			return nil
-		case keyMatches(msg, m.keys.SelectEnter):
-			m.issuesPanel.ToggleExpand()
-			return nil
-		case keyMatches(msg, m.keys.OpenInEditor):
-			return m.openIssueInEditor()
-		case keyMatches(msg, m.keys.FocusIssues), keyMatches(msg, m.keys.Cancel):
-			m.issuesFocused = false
-			return nil
-		case keyMatches(msg, m.keys.ToggleIssues):
-			m.toggleIssuesPanel()
-			return nil
-		case keyMatches(msg, m.keys.Quit):
-			return tea.Quit
+	// Search mode
+	if m.mode == ModeSearch {
+		switch msg.String() {
+		case "esc":
+			m.exitSearchMode(true) // Esc clears search
+		case "enter":
+			m.exitSearchMode(false) // Enter keeps search results
+		case "ctrl+n", "down":
+			m.nextSearchMatch()
+		case "ctrl+p", "up":
+			m.prevSearchMatch()
+		default:
+			// Update search input
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			// Execute search on each keystroke
+			m.executeSearch()
+			return cmd
 		}
 		return nil
 	}
@@ -668,81 +682,243 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		m.setStatus("Refreshing…")
 		return loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride)
 
-	case keyMatches(msg, m.keys.ToggleAutoFollow):
-		m.autoFollow = !m.autoFollow
-		if m.autoFollow {
-			m.viewport.GotoBottom()
-			m.setStatus("Following logs")
+	case keyMatches(msg, m.keys.ToggleAutoFollow), keyMatches(msg, m.keys.ToggleRawView):
+		// Toggle raw/grouped log view
+		m.phaseView.ToggleRawMode()
+		if m.phaseView.ShowRawMode {
+			m.setStatus("Raw log view")
 		} else {
-			m.setStatus("Paused log follow")
+			m.setStatus("Grouped log view")
+		}
+
+	// Scrolling - route to correct pane in run mode
+	case keyMatches(msg, m.keys.ScrollUp):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.scrollConsole(-1)
+		} else {
+			m.phaseView.ScrollUp(1)
+		}
+
+	case keyMatches(msg, m.keys.ScrollDown):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.scrollConsole(1)
+		} else {
+			m.phaseView.ScrollDown(1)
+		}
+
+	case keyMatches(msg, m.keys.ScrollTop):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.runMode.ConsolePos = 0
+		} else {
+			m.phaseView.GotoTop()
 		}
 
 	case keyMatches(msg, m.keys.ScrollBottom):
-		m.viewport.GotoBottom()
-		m.autoFollow = true
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			maxPos := len(m.runMode.ConsoleLogs) - m.layout.SplitBottomHeight()
+			if maxPos < 0 {
+				maxPos = 0
+			}
+			m.runMode.ConsolePos = maxPos
+		} else {
+			m.phaseView.GotoBottom()
+		}
+
+	case keyMatches(msg, m.keys.PageUp):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.scrollConsole(-m.layout.SplitBottomHeight())
+		} else {
+			m.phaseView.ScrollUp(m.phaseView.VisibleRows)
+		}
+
+	case keyMatches(msg, m.keys.PageDown):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.scrollConsole(m.layout.SplitBottomHeight())
+		} else {
+			m.phaseView.ScrollDown(m.phaseView.VisibleRows)
+		}
+
+	case keyMatches(msg, m.keys.HalfPageUp):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.scrollConsole(-m.layout.SplitBottomHeight() / 2)
+		} else {
+			m.phaseView.ScrollUp(m.phaseView.VisibleRows / 2)
+		}
+
+	case keyMatches(msg, m.keys.HalfPageDown):
+		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
+			m.scrollConsole(m.layout.SplitBottomHeight() / 2)
+		} else {
+			m.phaseView.ScrollDown(m.phaseView.VisibleRows / 2)
+		}
+
+	// Run mode pane switching
+	case keyMatches(msg, m.keys.SwitchPane):
+		if m.runMode.Active {
+			if m.runMode.FocusPane == PaneBuild {
+				m.runMode.FocusPane = PaneConsole
+				m.setStatus("Console pane")
+			} else {
+				m.runMode.FocusPane = PaneBuild
+				m.setStatus("Build pane")
+			}
+		}
+
+	// Phase controls
+	case keyMatches(msg, m.keys.ToggleCollapse):
+		m.phaseView.ToggleSelectedPhase()
+
+	case keyMatches(msg, m.keys.ExpandAll):
+		m.phaseView.ExpandAll()
+		m.setStatus("Expanded all phases")
+
+	case keyMatches(msg, m.keys.CollapseAll):
+		m.phaseView.CollapseAll()
+		m.setStatus("Collapsed all phases")
+
+	// Error navigation
+	case keyMatches(msg, m.keys.NextError):
+		if p, l := m.phaseView.FindNextError(-1, -1); p >= 0 {
+			m.setStatus("Next error")
+			_ = l // Line index available for future use
+		} else {
+			m.setStatus("No errors found")
+		}
+
+	case keyMatches(msg, m.keys.PrevError):
+		if p, l := m.phaseView.FindPrevError(len(m.phaseView.Phases), 0); p >= 0 {
+			m.setStatus("Previous error")
+			_ = l // Line index available for future use
+		} else {
+			m.setStatus("No errors found")
+		}
+
+	// Open in editor
+	case keyMatches(msg, m.keys.OpenXcode):
+		return m.openInXcode()
+
+	case keyMatches(msg, m.keys.OpenEditor):
+		return m.openInEditor()
 
 	case keyMatches(msg, m.keys.Search):
-		m.setStatus("Search not implemented yet")
-
-	case keyMatches(msg, m.keys.ToggleIssues):
-		m.toggleIssuesPanel()
-
-	case keyMatches(msg, m.keys.FocusIssues):
-		if m.showIssues && m.issuesPanel.HasIssues() {
-			m.issuesFocused = true
-		}
+		m.enterSearchMode()
 	}
 
 	return nil
 }
 
-// toggleIssuesPanel toggles the visibility of the issues panel
-func (m *Model) toggleIssuesPanel() {
-	if m.issuesPanel.HasIssues() {
-		m.showIssues = !m.showIssues
-		m.layout.ShowIssuesPanel = m.showIssues
-		if m.showIssues {
-			m.layout.IssuesPanelHeight = m.layout.CalculateIssuesPanelHeight(len(m.issuesPanel.Issues))
+// openInXcode opens the project in Xcode
+func (m *Model) openInXcode() tea.Cmd {
+	// Prefer workspace over project
+	var path string
+	if m.cfg.Workspace != "" {
+		path = filepath.Join(m.projectRoot, m.cfg.Workspace)
+	} else if m.cfg.Project != "" {
+		path = filepath.Join(m.projectRoot, m.cfg.Project)
+	} else {
+		m.setStatus("No project configured")
+		return nil
+	}
+
+	return func() tea.Msg {
+		cmd := exec.Command("open", "-a", "Xcode", path)
+		if err := cmd.Start(); err != nil {
+			return statusMsg("Failed to open Xcode")
 		}
-		m.updateViewportSize()
-		m.issuesFocused = false
+		return statusMsg("Opened in Xcode")
 	}
 }
 
-// openIssueInEditor opens the selected issue in the user's editor
-func (m *Model) openIssueInEditor() tea.Cmd {
-	if m.issuesPanel.SelectedIdx >= len(m.issuesPanel.Issues) {
-		return nil
-	}
-
-	issue := m.issuesPanel.Issues[m.issuesPanel.SelectedIdx]
-	if issue.FilePath == "" {
-		m.setStatus("No file location")
-		return nil
-	}
-
-	// Build editor command
+// openInEditor opens the project in $EDITOR
+func (m *Model) openInEditor() tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
-		editor = "open" // macOS default
+		editor = "code" // Fall back to VS Code
 	}
 
-	// Format: editor +line file or open -t file
-	var cmd *exec.Cmd
-	if editor == "open" {
-		cmd = exec.Command("open", "-t", issue.FilePath)
-	} else if issue.Line > 0 {
-		cmd = exec.Command(editor, fmt.Sprintf("+%d", issue.Line), issue.FilePath)
-	} else {
-		cmd = exec.Command(editor, issue.FilePath)
-	}
-
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		if err != nil {
-			return statusMsg("Failed to open editor")
+	return func() tea.Msg {
+		cmd := exec.Command(editor, m.projectRoot)
+		if err := cmd.Start(); err != nil {
+			return statusMsg("Failed to open editor: " + err.Error())
 		}
-		return nil
-	})
+		return statusMsg("Opened in " + editor)
+	}
+}
+
+// enterSearchMode enters search mode
+func (m *Model) enterSearchMode() {
+	m.mode = ModeSearch
+	m.searchInput.Reset()
+	m.searchInput.Focus()
+	m.searchActive = true
+}
+
+// exitSearchMode exits search mode and optionally clears search
+func (m *Model) exitSearchMode(clearSearch bool) {
+	m.mode = ModeNormal
+	m.searchInput.Blur()
+	m.searchActive = false
+	if clearSearch {
+		m.searchQuery = ""
+		m.searchMatches = nil
+		m.searchCursor = 0
+		m.phaseView.ClearSearch()
+	}
+}
+
+// executeSearch performs the search
+func (m *Model) executeSearch() {
+	query := m.searchInput.Value()
+	if query == "" {
+		m.searchMatches = nil
+		m.searchCursor = 0
+		m.phaseView.ClearSearch()
+		return
+	}
+
+	m.searchQuery = query
+	m.searchMatches = m.phaseView.Search(query)
+	m.searchCursor = 0
+
+	if len(m.searchMatches) > 0 {
+		m.setStatus(fmt.Sprintf("%d matches", len(m.searchMatches)))
+		m.jumpToSearchMatch(0)
+	} else {
+		m.setStatus("No matches found")
+	}
+}
+
+// jumpToSearchMatch jumps to a specific search match
+func (m *Model) jumpToSearchMatch(idx int) {
+	if idx < 0 || idx >= len(m.searchMatches) {
+		return
+	}
+	m.searchCursor = idx
+	match := m.searchMatches[idx]
+	m.phaseView.JumpToMatch(match.Phase, match.Line)
+}
+
+// nextSearchMatch moves to the next search match
+func (m *Model) nextSearchMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchCursor = (m.searchCursor + 1) % len(m.searchMatches)
+	m.jumpToSearchMatch(m.searchCursor)
+	m.setStatus(fmt.Sprintf("%d/%d", m.searchCursor+1, len(m.searchMatches)))
+}
+
+// prevSearchMatch moves to the previous search match
+func (m *Model) prevSearchMatch() {
+	if len(m.searchMatches) == 0 {
+		return
+	}
+	m.searchCursor--
+	if m.searchCursor < 0 {
+		m.searchCursor = len(m.searchMatches) - 1
+	}
+	m.jumpToSearchMatch(m.searchCursor)
+	m.setStatus(fmt.Sprintf("%d/%d", m.searchCursor+1, len(m.searchMatches)))
 }
 
 // statusMsg is a message for setting status
@@ -837,57 +1013,24 @@ func (m *Model) saveRecentCombo() {
 
 func (m *Model) handleEvent(ev core.Event) {
 	line := m.formatEventLine(ev)
-	m.appendLog(line)
+
+	// In run mode, detect console output (after app launches)
+	// Console output typically has type "log" and comes from the running app
+	if m.runMode.Active && m.runningCmd == "run" {
+		// Check if this is console output (app is running, not build output)
+		isConsoleOutput := ev.Type == "log" && m.currentStage == "Running"
+		if isConsoleOutput {
+			m.appendConsoleLog(line)
+		} else {
+			m.appendLog(line)
+		}
+	} else {
+		m.appendLog(line)
+	}
 
 	// Track progress for stage indicators
 	m.parseProgressFromEvent(ev)
-
-	// Collect issues from events
-	m.collectIssueFromEvent(ev)
-}
-
-// collectIssueFromEvent parses errors/warnings from events and adds them to the panel
-func (m *Model) collectIssueFromEvent(ev core.Event) {
-	switch ev.Type {
-	case "error":
-		issue := Issue{
-			Type:    IssueError,
-			Message: ev.Msg,
-		}
-		if ev.Err != nil {
-			issue.Message = ev.Err.Message
-			issue.Context = ev.Err.Detail
-		}
-		// Parse file location from message
-		filePath, lineNum, col := parseIssueLocation(ev.Msg)
-		issue.FilePath = filePath
-		issue.Line = lineNum
-		issue.Column = col
-		m.issuesPanel.AddIssue(issue)
-
-	case "warning":
-		issue := Issue{
-			Type:    IssueWarning,
-			Message: ev.Msg,
-		}
-		filePath, lineNum, col := parseIssueLocation(ev.Msg)
-		issue.FilePath = filePath
-		issue.Line = lineNum
-		issue.Column = col
-		m.issuesPanel.AddIssue(issue)
-
-	case "log", "log_raw":
-		// Also parse from log lines for xcpretty/xcbeautify output
-		m.issuesPanel.AddFromLogLine(ev.Msg)
-	}
-
-	// Auto-show panel when errors exist
-	if m.issuesPanel.ErrorCount() > 0 && !m.showIssues {
-		m.showIssues = true
-		m.layout.ShowIssuesPanel = true
-		m.layout.IssuesPanelHeight = m.layout.CalculateIssuesPanelHeight(len(m.issuesPanel.Issues))
-		m.updateViewportSize()
-	}
+	// Error/warning counts are tracked by PhaseView through categorizeLogLine
 }
 
 func (m *Model) parseProgressFromEvent(ev core.Event) {
@@ -986,12 +1129,8 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 
 	success := msg.err == nil
 
-	// Auto-hide issues panel on success with no errors
-	if success && m.issuesPanel.ErrorCount() == 0 {
-		m.showIssues = false
-		m.layout.ShowIssuesPanel = false
-		m.updateViewportSize()
-	}
+	// Mark build complete in PhaseView (triggers smart collapse)
+	m.phaseView.MarkBuildComplete(success)
 
 	// Track result duration for status bar
 	var duration time.Duration
@@ -1059,11 +1198,18 @@ func (m *Model) startOp(name string) tea.Cmd {
 	m.progressBar.Total = 0
 	m.layout.ShowProgressBar = true
 
-	// Clear issues panel for new operation
-	m.issuesPanel.Clear()
-	m.showIssues = false
-	m.layout.ShowIssuesPanel = false
-	m.updateViewportSize()
+	// Activate run mode split view for "run" command
+	if name == "run" {
+		m.runMode.Active = true
+		m.runMode.ConsoleLogs = nil
+		m.runMode.FocusPane = PaneBuild
+		m.runMode.ConsolePos = 0
+	} else {
+		m.runMode.Active = false
+	}
+
+	// Clear logs for new operation
+	m.phaseView.Clear()
 
 	m.appendLog("─────────────────────────────────────────")
 	m.appendLog(fmt.Sprintf("%s  %s", time.Now().Format("15:04:05"), strings.ToUpper(name)))
@@ -1148,12 +1294,32 @@ func waitForDone(ch <-chan opDoneMsg) tea.Cmd {
 }
 
 func (m *Model) appendLog(line string) {
-	if strings.TrimSpace(line) == "" {
-		return
+	m.phaseView.AddLine(line)
+}
+
+func (m *Model) appendConsoleLog(line string) {
+	m.runMode.ConsoleLogs = append(m.runMode.ConsoleLogs, line)
+	// Auto-scroll if at bottom
+	maxPos := len(m.runMode.ConsoleLogs) - m.layout.SplitBottomHeight()
+	if m.runMode.ConsolePos >= maxPos-1 {
+		m.runMode.ConsolePos = maxPos
 	}
-	m.logLines = append(m.logLines, line)
-	if len(m.logLines) > 2000 {
-		m.logLines = m.logLines[len(m.logLines)-2000:]
+}
+
+// scrollConsole scrolls the console pane by delta lines
+func (m *Model) scrollConsole(delta int) {
+	m.runMode.ConsolePos += delta
+
+	// Clamp to valid range
+	maxPos := len(m.runMode.ConsoleLogs) - m.layout.SplitBottomHeight()
+	if maxPos < 0 {
+		maxPos = 0
+	}
+	if m.runMode.ConsolePos < 0 {
+		m.runMode.ConsolePos = 0
+	}
+	if m.runMode.ConsolePos > maxPos {
+		m.runMode.ConsolePos = maxPos
 	}
 }
 
@@ -1232,11 +1398,69 @@ func (m Model) View() string {
 		return m.paletteOverlayView()
 	}
 
+	// Search mode - show main view with search bar
+	if m.mode == ModeSearch {
+		return m.searchView()
+	}
+
 	// Normal mode - main layout
 	return m.mainView()
 }
 
 func (m Model) mainView() string {
+	// Sync state to components
+	m.syncStatusBarState()
+
+	// Build status bar content (use minimal mode for small terminals)
+	statusBarContent := m.statusBar.ViewWithMinimal(m.width, m.styles, m.layout.MinimalMode)
+
+	// Build progress bar content (if running)
+	progressBarContent := ""
+	if m.running {
+		m.layout.ShowProgressBar = true
+		progressBarContent = m.progressBar.View(m.width, m.styles)
+	} else {
+		m.layout.ShowProgressBar = false
+	}
+
+	// Build hints bar
+	hintsBarContent := m.hintsBar.View(m.width, m.styles)
+
+	// Use split view for run mode
+	if m.runMode.Active {
+		topContent := m.contentView()
+		bottomContent := m.consoleView()
+		topFocused := m.runMode.FocusPane == PaneBuild
+
+		// Add tab hint for run mode
+		hintsBarContent = m.runModeHintsBar()
+
+		return m.layout.RenderSplitLayout(
+			statusBarContent,
+			progressBarContent,
+			topContent,
+			bottomContent,
+			hintsBarContent,
+			topFocused,
+			m.styles,
+		)
+	}
+
+	// Build main content (logs)
+	contentArea := m.contentView()
+
+	// Use layout to render everything
+	return m.layout.RenderFullLayout(
+		statusBarContent,
+		progressBarContent,
+		contentArea,
+		hintsBarContent,
+		m.styles,
+	)
+}
+
+// searchView renders the main view with search bar at bottom
+func (m Model) searchView() string {
 	// Sync state to components
 	m.syncStatusBarState()
 
@@ -1255,35 +1479,131 @@ func (m Model) mainView() string {
 	// Build main content (logs)
 	contentArea := m.contentView()
 
-	// Build issues panel content (if has issues)
-	issuesPanelContent := ""
-	if m.showIssues && m.issuesPanel.HasIssues() {
-		m.issuesPanel.Width = m.width
-		m.issuesPanel.Height = m.layout.IssuesPanelHeight
-		issuesPanelContent = m.issuesPanel.View(m.styles)
-	}
-
-	// Build context-aware hints bar
-	hintsBarContent := m.hintsBar.ViewWithContext(m.width, m.styles, m.issuesFocused, m.issuesPanel.HasIssues())
+	// Build search bar instead of hints
+	searchBarContent := m.searchBarView()
 
 	// Use layout to render everything
 	return m.layout.RenderFullLayout(
 		statusBarContent,
 		progressBarContent,
 		contentArea,
-		issuesPanelContent,
-		hintsBarContent,
+		searchBarContent,
 		m.styles,
 	)
 }
 
+// searchBarView renders the search input bar
+func (m Model) searchBarView() string {
+	s := m.styles
+
+	// Search icon and input
+	searchStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Accent)
+
+	inputStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Text)
+
+	// Match count
+	var matchInfo string
+	if m.searchQuery != "" {
+		countStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
+		if len(m.searchMatches) > 0 {
+			matchInfo = countStyle.Render(fmt.Sprintf(" %d/%d", m.searchCursor+1, len(m.searchMatches)))
+		} else {
+			matchInfo = countStyle.Render(" No matches")
+		}
+	}
+
+	// Hints
+	hintStyle := lipgloss.NewStyle().Foreground(s.Colors.TextSubtle)
+	hints := hintStyle.Render("  enter:confirm  esc:cancel  ↑↓:navigate")
+
+	return searchStyle.Render("/") + " " + inputStyle.Render(m.searchInput.View()) + matchInfo + hints
+}
+
 // contentView renders the main content area (logs)
 func (m Model) contentView() string {
-	if len(m.logLines) == 0 {
+	if len(m.phaseView.FlatLines) == 0 {
 		return m.emptyStateView()
 	}
 
-	return m.viewport.View()
+	return m.phaseView.View(m.styles)
+}
+
+// consoleView renders the console output pane for run mode
+func (m Model) consoleView() string {
+	s := m.styles
+
+	if len(m.runMode.ConsoleLogs) == 0 {
+		// Empty console state
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(s.Colors.TextSubtle).
+			Padding(1, 2)
+		return emptyStyle.Render("Waiting for app output...")
+	}
+
+	// Calculate visible range
+	height := m.layout.SplitBottomHeight()
+	start := m.runMode.ConsolePos
+	if start < 0 {
+		start = 0
+	}
+	end := start + height
+	if end > len(m.runMode.ConsoleLogs) {
+		end = len(m.runMode.ConsoleLogs)
+	}
+
+	// Build visible lines
+	var lines []string
+	lineStyle := lipgloss.NewStyle().Foreground(s.Colors.Text)
+	for i := start; i < end; i++ {
+		line := m.runMode.ConsoleLogs[i]
+		// Truncate long lines
+		if len(line) > m.layout.ContentWidth()-4 {
+			line = line[:m.layout.ContentWidth()-7] + "..."
+		}
+		lines = append(lines, lineStyle.Render(line))
+	}
+
+	// Pad to fill height
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// runModeHintsBar returns hints specific to run mode
+func (m Model) runModeHintsBar() string {
+	s := m.styles
+
+	keyStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.Accent).
+		Bold(true)
+	descStyle := lipgloss.NewStyle().
+		Foreground(s.Colors.TextMuted)
+
+	hints := []struct {
+		Key  string
+		Desc string
+	}{
+		{"tab", "switch pane"},
+		{"x", "stop app"},
+		{"↑↓", "scroll"},
+		{"esc", "cancel"},
+		{"?", "help"},
+	}
+
+	var parts []string
+	for i, hint := range hints {
+		part := keyStyle.Render(hint.Key) + ":" + descStyle.Render(hint.Desc)
+		parts = append(parts, part)
+		if i < len(hints)-1 {
+			parts = append(parts, "  ")
+		}
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
 }
 
 // emptyStateView renders the empty state with icon + message + hint

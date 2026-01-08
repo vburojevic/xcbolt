@@ -17,13 +17,14 @@ type Layout struct {
 	Height int
 
 	// Reserved heights
-	StatusBarHeight   int
-	ProgressHeight    int
-	HintsBarHeight    int
-	IssuesPanelHeight int
-	ShowProgressBar   bool
-	ShowHintsBar      bool
-	ShowIssuesPanel   bool
+	StatusBarHeight int
+	ProgressHeight  int
+	HintsBarHeight  int
+	ShowProgressBar bool
+	ShowHintsBar    bool
+
+	// Minimal mode for small terminals
+	MinimalMode bool
 }
 
 // NewLayout creates a new layout with default settings
@@ -41,6 +42,9 @@ func NewLayout() Layout {
 func (l *Layout) SetSize(width, height int) {
 	l.Width = width
 	l.Height = height
+
+	// Enable minimal mode for small terminals
+	l.MinimalMode = width < 80 || height < 20
 }
 
 // =============================================================================
@@ -54,13 +58,15 @@ func (l Layout) ContentWidth() int {
 
 // ContentHeight returns the height available for the content pane
 func (l Layout) ContentHeight() int {
+	if l.MinimalMode {
+		// In minimal mode: 1 line status, rest for content
+		return maxInt(0, l.Height-1)
+	}
+
 	h := l.Height - l.StatusBarHeight
 
 	if l.ShowProgressBar {
 		h -= l.ProgressHeight
-	}
-	if l.ShowIssuesPanel {
-		h -= l.IssuesPanelHeight
 	}
 	if l.ShowHintsBar {
 		h -= l.HintsBarHeight
@@ -69,22 +75,19 @@ func (l Layout) ContentHeight() int {
 	return maxInt(0, h)
 }
 
-// CalculateIssuesPanelHeight calculates adaptive height based on issue count
-func (l Layout) CalculateIssuesPanelHeight(issueCount int) int {
-	// 1 line header + 1 line separator + issues + possible "more" line
-	desired := 3 + minInt(issueCount, 5)
+// SplitTopHeight returns the height for the top pane (60%) in split view
+func (l Layout) SplitTopHeight() int {
+	total := l.ContentHeight()
+	// Reserve 1 line for the divider
+	return maxInt(0, (total-1)*60/100)
+}
 
-	// Minimum 4 lines, max 40% of screen
-	minHeight := 4
-	maxHeight := l.Height * 40 / 100
-
-	if desired < minHeight {
-		desired = minHeight
-	}
-	if desired > maxHeight {
-		desired = maxHeight
-	}
-	return desired
+// SplitBottomHeight returns the height for the bottom pane (40%) in split view
+func (l Layout) SplitBottomHeight() int {
+	total := l.ContentHeight()
+	topHeight := l.SplitTopHeight()
+	// Reserve 1 line for the divider
+	return maxInt(0, total-topHeight-1)
 }
 
 // =============================================================================
@@ -93,6 +96,13 @@ func (l Layout) CalculateIssuesPanelHeight(issueCount int) int {
 
 // RenderStatusBar renders the full-width status bar at the top
 func (l Layout) RenderStatusBar(content string, styles Styles) string {
+	if l.MinimalMode {
+		// Minimal mode: single line, no border
+		return lipgloss.NewStyle().
+			Width(l.Width).
+			Render(content)
+	}
+
 	// Content is pre-styled from StatusBar.View() - don't wrap in Width()
 	// which can conflict with already-styled ANSI content
 	paddedContent := lipgloss.NewStyle().
@@ -109,7 +119,7 @@ func (l Layout) RenderStatusBar(content string, styles Styles) string {
 
 // RenderProgressBar renders the progress bar below status bar
 func (l Layout) RenderProgressBar(content string, styles Styles) string {
-	if !l.ShowProgressBar {
+	if !l.ShowProgressBar || l.MinimalMode {
 		return ""
 	}
 
@@ -123,7 +133,7 @@ func (l Layout) RenderProgressBar(content string, styles Styles) string {
 
 // RenderHintsBar renders the hints bar at the bottom
 func (l Layout) RenderHintsBar(content string, styles Styles) string {
-	if !l.ShowHintsBar {
+	if !l.ShowHintsBar || l.MinimalMode {
 		return ""
 	}
 
@@ -139,25 +149,21 @@ func (l Layout) RenderHintsBar(content string, styles Styles) string {
 	return style.Render(content)
 }
 
-// RenderIssuesPanel renders the issues panel between content and hints bar
-func (l Layout) RenderIssuesPanel(content string, styles Styles) string {
-	if !l.ShowIssuesPanel {
-		return ""
+// RenderFullLayout composes all layout elements
+func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar string, styles Styles) string {
+	if l.MinimalMode {
+		// Minimal mode: status bar + content only
+		var parts []string
+		parts = append(parts, l.RenderStatusBar(statusBar, styles))
+
+		contentStyle := lipgloss.NewStyle().
+			Width(l.Width).
+			Height(l.ContentHeight())
+		parts = append(parts, contentStyle.Render(content))
+
+		return lipgloss.JoinVertical(lipgloss.Left, parts...)
 	}
 
-	style := lipgloss.NewStyle().
-		Width(l.Width).
-		Height(l.IssuesPanelHeight).
-		Padding(0, 1).
-		BorderStyle(lipgloss.Border{Top: "─"}).
-		BorderForeground(styles.Colors.Border).
-		BorderTop(true)
-
-	return style.Render(content)
-}
-
-// RenderFullLayout composes all layout elements
-func (l Layout) RenderFullLayout(statusBar, progressBar, content, issuesPanel, hintsBar string, styles Styles) string {
 	var parts []string
 
 	// Status bar at top
@@ -174,10 +180,75 @@ func (l Layout) RenderFullLayout(statusBar, progressBar, content, issuesPanel, h
 		Height(l.ContentHeight())
 	parts = append(parts, contentStyle.Render(content))
 
-	// Issues panel (if visible)
-	if l.ShowIssuesPanel && issuesPanel != "" {
-		parts = append(parts, l.RenderIssuesPanel(issuesPanel, styles))
+	// Hints bar at bottom
+	if l.ShowHintsBar {
+		parts = append(parts, l.RenderHintsBar(hintsBar, styles))
 	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// RenderSplitLayout renders a split view with top and bottom panes
+func (l Layout) RenderSplitLayout(statusBar, progressBar, topContent, bottomContent, hintsBar string, topFocused bool, styles Styles) string {
+	if l.MinimalMode {
+		// Minimal mode: just show top content (no split)
+		return l.RenderFullLayout(statusBar, progressBar, topContent, hintsBar, styles)
+	}
+
+	var parts []string
+
+	// Status bar at top
+	parts = append(parts, l.RenderStatusBar(statusBar, styles))
+
+	// Progress bar (if visible)
+	if l.ShowProgressBar && progressBar != "" {
+		parts = append(parts, l.RenderProgressBar(progressBar, styles))
+	}
+
+	// Top pane (Build Logs)
+	topHeight := l.SplitTopHeight()
+	topStyle := lipgloss.NewStyle().
+		Width(l.Width).
+		Height(topHeight)
+	parts = append(parts, topStyle.Render(topContent))
+
+	// Divider with focus indicator
+	dividerStyle := lipgloss.NewStyle().Foreground(styles.Colors.BorderMuted)
+	dividerChar := "─"
+	divider := strings.Repeat(dividerChar, l.Width)
+
+	// Show pane labels in divider
+	topLabel := " Build "
+	bottomLabel := " Console "
+	if topFocused {
+		topLabel = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true).Render("●") + " Build "
+	} else {
+		bottomLabel = lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true).Render("●") + " Console "
+	}
+
+	// Build divider with labels
+	labelStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+	leftLabel := labelStyle.Render(topLabel)
+	rightLabel := labelStyle.Render(bottomLabel)
+
+	// Calculate remaining space
+	leftWidth := lipgloss.Width(leftLabel)
+	rightWidth := lipgloss.Width(rightLabel)
+	middleWidth := l.Width - leftWidth - rightWidth - 4 // 4 for spacing
+
+	if middleWidth > 0 {
+		middleDivider := dividerStyle.Render(strings.Repeat(dividerChar, middleWidth))
+		parts = append(parts, leftLabel+"─"+middleDivider+"─"+rightLabel)
+	} else {
+		parts = append(parts, dividerStyle.Render(divider))
+	}
+
+	// Bottom pane (Console)
+	bottomHeight := l.SplitBottomHeight()
+	bottomStyle := lipgloss.NewStyle().
+		Width(l.Width).
+		Height(bottomHeight)
+	parts = append(parts, bottomStyle.Render(bottomContent))
 
 	// Hints bar at bottom
 	if l.ShowHintsBar {
