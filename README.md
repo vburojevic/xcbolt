@@ -62,20 +62,30 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 
 ### Keybindings
 
+**Actions:**
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `b` | Build | `1` | Stream tab |
-| `r` | Run | `2` | Issues tab |
-| `t` | Test | `3` | Summary tab |
-| `c` | Clean | `tab` | Next tab |
-| `x` | Stop app | `/` | Search logs |
-| `s` | Select scheme | `n` / `N` | Next/prev error |
-| `d` | Select destination | `o` | Open in Xcode |
-| `i` | Init wizard | `O` | Open in $EDITOR |
-| `Ctrl+K` | Command palette | `?` | Help |
-| `esc` | Cancel operation | `q` | Quit |
+| `b` | Build | `c` | Clean |
+| `r` | Run | `x` | Stop app |
+| `t` | Test | `esc` | Cancel |
 
-**Scrolling:** Arrow keys, `j`/`k` (vim), `PgUp`/`PgDn`, `Ctrl+U`/`Ctrl+D`
+**Navigation:**
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `1` | Stream tab | `s` | Select scheme |
+| `2` | Issues tab | `d` | Select destination |
+| `3` | Summary tab | `Ctrl+K` | Command palette |
+| `tab` | Next tab | `i` | Init wizard |
+
+**Search & View:**
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `/` | Search logs | `v` | Toggle view mode |
+| `n` / `N` | Next/prev error | `e` / `E` | Expand/collapse all |
+| `o` | Open in Xcode | `y` | Copy line |
+| `?` | Help | `q` | Quit |
+
+**Scrolling:** `j`/`k`, arrows, `PgUp`/`PgDn`, `Ctrl+U`/`Ctrl+D`, `g`/`G` (top/bottom)
 
 ---
 
