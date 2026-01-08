@@ -88,8 +88,8 @@ func NewTabView() *TabView {
 // SetSize updates dimensions for all tabs
 func (tv *TabView) SetSize(width, height int) {
 	tv.Width = width
-	// Subtract 2 lines for tab bar
-	contentHeight := height - 2
+	// Subtract 3 lines for tab bar (2 content lines + 1 border line from Container style)
+	contentHeight := height - 3
 	if contentHeight < 0 {
 		contentHeight = 0
 	}

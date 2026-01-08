@@ -37,7 +37,7 @@ func NewLayout() Layout {
 		StatusBarHeight: 2, // 1 line content + 1 line border
 		ProgressHeight:  1,
 		HintsBarHeight:  2, // 1 line content + 1 line border
-		TabBarHeight:    2, // 2 lines for tab bar
+		TabBarHeight:    3, // 2 content lines + 1 border line
 		ShowProgressBar: false,
 		ShowHintsBar:    true,
 		ShowTabBar:      true,
