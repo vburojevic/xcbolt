@@ -105,14 +105,18 @@ func (l Layout) SplitBottomHeight() int {
 func (l Layout) RenderStatusBar(content string, styles Styles) string {
 	if l.MinimalMode {
 		// Minimal mode: single line, no border
-		minimal := lipgloss.NewStyle().Padding(0, 1)
+		minimal := lipgloss.NewStyle().
+			Padding(0, 1).
+			Height(1) // Force minimum height
 		if l.Width > 0 {
 			minimal = minimal.Width(l.Width)
 		}
 		return minimal.Render(content)
 	}
 
-	barStyle := styles.StatusBar.Container
+	// Force explicit height to ensure status bar always renders
+	barStyle := styles.StatusBar.Container.
+		Height(l.StatusBarHeight) // Force height (2 lines: content + border)
 	if l.Width > 0 {
 		barStyle = barStyle.Width(l.Width)
 	}
