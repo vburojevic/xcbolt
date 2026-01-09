@@ -19,11 +19,15 @@ func issueSeverity(line string) TabLineType {
 		return TabLineTypeNote
 	}
 
+	if isFatalBuildErrorLine(lower, line) {
+		return TabLineTypeError
+	}
+
 	if !isErrorishLine(lower, line) {
 		return TabLineTypeNormal
 	}
 
-	if fileErrorRE.MatchString(line) || isFatalBuildErrorLine(lower, line) {
+	if fileErrorRE.MatchString(line) {
 		return TabLineTypeError
 	}
 	return TabLineTypeWarning

@@ -1780,9 +1780,17 @@ func (m *Model) handleEvent(ev core.Event) {
 	// Error/warning counts are tracked by PhaseView through categorizeLogLine
 
 	// Track errors/warnings count for Dashboard
-	if ev.Type == "error" || strings.Contains(strings.ToLower(ev.Msg), "error:") {
+	if isConsoleEvent(ev) {
+		return
+	}
+	if ev.Type == "error" {
 		m.tabView.SummaryTab.IncrementErrors()
-	} else if strings.Contains(strings.ToLower(ev.Msg), "warning:") {
+		return
+	}
+	switch issueSeverity(ev.Msg) {
+	case TabLineTypeError:
+		m.tabView.SummaryTab.IncrementErrors()
+	case TabLineTypeWarning:
 		m.tabView.SummaryTab.IncrementWarnings()
 	}
 }
@@ -1799,6 +1807,16 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 		m.stageProgress = ""
 		m.progressCur = 0
 		m.progressTotal = 0
+		return
+	}
+
+	// Clear build stage once build completes successfully.
+	if strings.Contains(msg, "Build Succeeded") || strings.Contains(msg, "BUILD SUCCEEDED") {
+		m.currentStage = ""
+		m.stageProgress = ""
+		m.progressCur = 0
+		m.progressTotal = 0
+		m.tabView.SummaryTab.UpdateProgress("", 0, 0, "")
 		return
 	}
 
