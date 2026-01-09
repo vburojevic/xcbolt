@@ -56,9 +56,9 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 
 | Tab | Description |
 |-----|-------------|
-| **Stream** | Real-time build output with search and filtering |
+| **Logs** | Real-time build output with search and filtering |
 | **Issues** | Errors and warnings extracted for quick navigation |
-| **Summary** | Card-based dashboard with project info and build status |
+| **Dashboard** | Card-based dashboard with project info and build status |
 
 ### Keybindings
 
@@ -72,10 +72,11 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 **Navigation:**
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `1` | Stream tab | `s` | Select scheme |
+| `1` | Logs tab | `s` | Select scheme |
 | `2` | Issues tab | `d` | Select destination |
-| `3` | Summary tab | `Ctrl+K` | Command palette |
+| `3` | Dashboard tab | `Ctrl+K` | Command palette |
 | `tab` | Next tab | `i` | Init wizard |
+| `~` | Build config | `Ctrl+R` | Refresh context |
 
 **Search & View:**
 | Key | Action | Key | Action |

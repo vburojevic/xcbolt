@@ -224,7 +224,7 @@ func defaultKeyMap() keyMap {
 		),
 		ToggleRawView: key.NewBinding(
 			key.WithKeys("v"),
-			key.WithHelp("v", "toggle stream view"),
+			key.WithHelp("v", "toggle logs view"),
 		),
 		ToggleCollapse: key.NewBinding(
 			key.WithKeys("enter", " "),
@@ -279,7 +279,7 @@ func defaultKeyMap() keyMap {
 		// Repurposed: now toggles stream view
 		ToggleAutoFollow: key.NewBinding(
 			key.WithKeys("f"),
-			key.WithHelp("f", "toggle stream view"),
+			key.WithHelp("f", "toggle logs view"),
 		),
 
 		// Selector navigation
