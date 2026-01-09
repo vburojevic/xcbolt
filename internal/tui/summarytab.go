@@ -21,6 +21,7 @@ const (
 	BuildStatusRunning
 	BuildStatusSuccess
 	BuildStatusFailed
+	BuildStatusCanceled
 )
 
 // Spinner frames for animation
@@ -167,11 +168,15 @@ func (st *SummaryTab) UpdateProgress(file string, current, total int, stage stri
 	// Extract just the filename
 	if file != "" {
 		st.CurrentFile = filepath.Base(file)
+	} else {
+		st.CurrentFile = ""
 	}
 	st.FileProgress = current
 	st.FilesTotal = total
 	if stage != "" {
 		st.CurrentStage = stage
+	} else {
+		st.CurrentStage = ""
 	}
 }
 
@@ -191,16 +196,23 @@ func (st *SummaryTab) IncrementWarnings() {
 }
 
 // SetResult updates with final build results
-func (st *SummaryTab) SetResult(success bool, duration string, phases []PhaseResult, errors, warnings int) {
-	if success {
+func (st *SummaryTab) SetResult(status BuildStatus, duration string, phases []PhaseResult, errors, warnings int) {
+	switch status {
+	case BuildStatusSuccess:
 		st.Status = BuildStatusSuccess
-	} else {
+	case BuildStatusCanceled:
+		st.Status = BuildStatusCanceled
+	default:
 		st.Status = BuildStatusFailed
 	}
 	st.Duration = duration
 	st.Phases = phases
 	st.ErrorCount = errors
 	st.WarningCount = warnings
+
+	if st.Status == BuildStatusSuccess || st.Status == BuildStatusFailed {
+		st.LastBuildSuccess = st.Status == BuildStatusSuccess
+	}
 
 	// Count files from phases
 	st.FileCount = 0
@@ -329,6 +341,8 @@ func (st *SummaryTab) View(styles Styles) string {
 		return st.successView(styles)
 	case BuildStatusFailed:
 		return st.failedView(styles)
+	case BuildStatusCanceled:
+		return st.canceledView(styles)
 	default:
 		return st.idleView(styles)
 	}
@@ -566,10 +580,6 @@ func (st *SummaryTab) buildingView(styles Styles) string {
 		}
 	}
 	buildContent = append(buildContent, activityLine)
-	if st.LogIdle > 8*time.Second {
-		idleStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
-		buildContent = append(buildContent, idleStyle.Render(fmt.Sprintf("No new logs for %s", formatShortDuration(st.LogIdle))))
-	}
 
 	cards = append(cards, st.renderCard(cardTitle, buildContent, cardWidth, styles))
 
@@ -746,6 +756,89 @@ func (st *SummaryTab) failedView(styles Styles) string {
 	hintStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
 	summaryContent = append(summaryContent, hintStyle.Render("Press 2 to view Issues"))
 	cards = append(cards, st.renderCard("Summary", summaryContent, cardWidth, styles))
+
+	// Quick Actions
+	actionStyle := lipgloss.NewStyle().
+		Foreground(styles.Colors.Accent).
+		Bold(true)
+	keyStyle := lipgloss.NewStyle().
+		Foreground(styles.Colors.TextMuted)
+
+	actions := lipgloss.JoinHorizontal(lipgloss.Center,
+		actionStyle.Render("[B]"), keyStyle.Render(" Rebuild   "),
+		actionStyle.Render("[C]"), keyStyle.Render(" Clean"),
+	)
+
+	content := lipgloss.JoinVertical(lipgloss.Center,
+		"",
+		strings.Join(cards, "\n\n"),
+		"",
+		actions,
+	)
+
+	return lipgloss.Place(
+		st.Width,
+		st.Height,
+		lipgloss.Center,
+		lipgloss.Center,
+		content,
+	)
+}
+
+// canceledView shows a canceled build (user-initiated)
+func (st *SummaryTab) canceledView(styles Styles) string {
+	cardWidth := st.Width - 8
+	if cardWidth > 70 {
+		cardWidth = 70
+	}
+	if cardWidth < 40 {
+		cardWidth = 40
+	}
+
+	var cards []string
+
+	// Canceled Card
+	canceledContent := []string{""}
+	canceledIcon := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted).Bold(true)
+	canceledText := canceledIcon.Render(styles.Icons.Paused + " BUILD CANCELED")
+	durationStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+	durationText := durationStyle.Render(st.Duration)
+
+	// Center text using lipgloss width calculations
+	innerWidth := cardWidth - 4 // Account for card borders
+	canceledContent = append(canceledContent, lipgloss.PlaceHorizontal(innerWidth, lipgloss.Center, canceledText))
+	if st.Duration != "" {
+		canceledContent = append(canceledContent, lipgloss.PlaceHorizontal(innerWidth, lipgloss.Center, durationText))
+	}
+	canceledContent = append(canceledContent, "")
+
+	cards = append(cards, st.renderCard("Build Canceled", canceledContent, cardWidth, styles))
+
+	// Summary Card
+	summaryContent := []string{}
+	var parts []string
+	if st.ErrorCount > 0 {
+		errStyle := lipgloss.NewStyle().Foreground(styles.Colors.Error)
+		parts = append(parts, errStyle.Render(fmt.Sprintf("%s %d errors", styles.Icons.Error, st.ErrorCount)))
+	}
+	if st.WarningCount > 0 {
+		warnStyle := lipgloss.NewStyle().Foreground(styles.Colors.Warning)
+		parts = append(parts, warnStyle.Render(fmt.Sprintf("%s %d warnings", styles.Icons.Warning, st.WarningCount)))
+	}
+	if len(parts) > 0 {
+		summaryContent = append(summaryContent, strings.Join(parts, "   "))
+	}
+
+	hintStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextSubtle)
+	if st.ErrorCount > 0 || st.WarningCount > 0 {
+		summaryContent = append(summaryContent, hintStyle.Render("Press 2 to view Issues"))
+	}
+
+	summaryTitle := "Summary (canceled)"
+	if st.ErrorCount > 0 {
+		summaryTitle = "Summary"
+	}
+	cards = append(cards, st.renderCard(summaryTitle, summaryContent, cardWidth, styles))
 
 	// Quick Actions
 	actionStyle := lipgloss.NewStyle().

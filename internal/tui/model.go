@@ -888,7 +888,7 @@ func (m *Model) applyTUIConfig() {
 func (m *Model) toggleLogView() {
 	if m.logViewMode == LogViewCards {
 		m.logViewMode = LogViewStream
-		m.setStatus("Stream view")
+		m.setStatus("Logs view")
 	} else {
 		m.logViewMode = LogViewCards
 		m.setStatus("Phase cards")
@@ -1120,7 +1120,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.Tab2):
 		m.tabView.SetActiveTab(TabStream)
-		m.setStatus("Stream")
+		m.setStatus("Logs")
 
 	case keyMatches(msg, m.keys.Tab3):
 		m.tabView.SetActiveTab(TabIssues)
@@ -1996,6 +1996,13 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 
 	success := msg.err == nil
+	canceled := errors.Is(msg.err, context.Canceled)
+	status := BuildStatusFailed
+	if canceled {
+		status = BuildStatusCanceled
+	} else if success {
+		status = BuildStatusSuccess
+	}
 
 	// Mark build complete in PhaseView (triggers smart collapse)
 	m.phaseView.MarkBuildComplete(success)
@@ -2043,11 +2050,20 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 
 	// Update TabView summary with build results
-	m.tabView.SetBuildResult(success, durationStr, nil)
+	m.tabView.SetBuildResult(status, durationStr, nil)
 
 	// Update status bar with last result
 	m.statusBar.HasLastResult = true
-	m.statusBar.LastResultSuccess = success
+	if !canceled {
+		m.statusBar.LastResultSuccess = success
+	}
+	if canceled {
+		m.statusBar.LastResultStatus = "canceled"
+	} else if success {
+		m.statusBar.LastResultStatus = "success"
+	} else {
+		m.statusBar.LastResultStatus = "error"
+	}
 	m.statusBar.LastResultOp = msg.cmd
 	if duration > 0 {
 		m.statusBar.LastResultTime = duration.Round(100 * time.Millisecond).String()
@@ -2056,10 +2072,10 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 
 	// Append result line to logs
-	resultLine := m.formatResultLine(msg.cmd, success, duration)
+	resultLine := m.formatResultLine(msg.cmd, success, canceled, duration)
 	m.appendLog(resultLine)
 	m.appendStreamLine(resultLine)
-	if msg.err != nil {
+	if msg.err != nil && !canceled {
 		errLine := "error: " + msg.err.Error()
 		m.appendLog(errLine)
 		m.appendStreamLine(errLine)
@@ -2067,8 +2083,12 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 
 	if msg.err != nil {
-		if errors.Is(msg.err, context.Canceled) && strings.EqualFold(msg.cmd, "run") {
-			m.setStatus("Run canceled")
+		if canceled {
+			if strings.EqualFold(msg.cmd, "run") {
+				m.setStatus("Run canceled by user")
+			} else {
+				m.setStatus(strings.ToUpper(msg.cmd) + " canceled by user")
+			}
 		} else {
 			m.lastErr = msg.err.Error()
 			m.setStatus(strings.ToUpper(msg.cmd) + " failed")
@@ -2415,13 +2435,17 @@ func (m *Model) formatEventLine(ev core.Event) string {
 	return prefix + msg
 }
 
-func (m *Model) formatResultLine(op string, success bool, duration time.Duration) string {
+func (m *Model) formatResultLine(op string, success bool, canceled bool, duration time.Duration) string {
 	icons := m.styles.Icons
 
 	icon := icons.Success
 	status := "success"
 	verb := "Succeeded"
-	if !success {
+	if canceled {
+		icon = icons.Paused
+		status = "canceled"
+		verb = "Canceled"
+	} else if !success {
 		icon = icons.Error
 		status = "error"
 		verb = "Failed"
@@ -2607,6 +2631,16 @@ func (m Model) consoleView() string {
 	if header != "" {
 		contentHeight--
 	}
+	barWidth := scrollbarWidth
+	if m.layout.ContentWidth()-barWidth < 1 {
+		barWidth = 0
+	}
+	contentWidth := m.layout.ContentWidth() - barWidth
+	if contentWidth < 1 {
+		contentWidth = m.layout.ContentWidth()
+	}
+	pad := lipgloss.NewStyle().Width(contentWidth)
+	emptyBar := strings.Repeat(" ", barWidth)
 	start := m.runMode.ConsolePos
 	if start < 0 {
 		start = 0
@@ -2619,11 +2653,18 @@ func (m Model) consoleView() string {
 	// Build visible lines
 	var lines []string
 	if header != "" {
-		lines = append(lines, header)
+		lines = append(lines, pad.Render(header)+emptyBar)
 	}
 	textStyle := lipgloss.NewStyle().Foreground(s.Colors.Text)
 	metaStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
 	systemStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
+	barLines := renderScrollbarLines(contentHeight, len(m.runMode.ConsoleLogs), m.runMode.ConsolePos, s)
+	if len(barLines) != contentHeight {
+		barLines = make([]string, contentHeight)
+		for i := range barLines {
+			barLines[i] = emptyBar
+		}
+	}
 	for i := start; i < end; i++ {
 		line := m.runMode.ConsoleLogs[i]
 		style := textStyle
@@ -2635,15 +2676,19 @@ func (m Model) consoleView() string {
 			style = systemStyle
 		}
 		// Truncate long lines
-		if len(line) > m.layout.ContentWidth()-4 {
-			line = line[:m.layout.ContentWidth()-7] + "..."
+		if contentWidth > 0 && len(line) > contentWidth-4 {
+			line = line[:contentWidth-7] + "..."
 		}
-		lines = append(lines, style.Render(line))
+		barLine := emptyBar
+		if barWidth > 0 {
+			barLine = barLines[i-start]
+		}
+		lines = append(lines, pad.Render(style.Render(line))+barLine)
 	}
 
 	// Pad to fill height
 	for len(lines) < height {
-		lines = append(lines, "")
+		lines = append(lines, pad.Render("")+emptyBar)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)

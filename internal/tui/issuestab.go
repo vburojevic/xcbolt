@@ -227,24 +227,51 @@ func (it *IssuesTab) View(styles Styles) string {
 		return it.emptyView(styles)
 	}
 
-	var sections []string
+	barWidth := scrollbarWidth
+	if it.Width-barWidth < 1 {
+		barWidth = 0
+	}
+	contentWidth := it.Width - barWidth
+	if contentWidth < 1 {
+		contentWidth = it.Width
+	}
+
+	emptyBar := strings.Repeat(" ", barWidth)
+	pad := lipgloss.NewStyle().Width(contentWidth)
+
+	var lines []string
 
 	// Header with counts
 	header := it.renderHeader(styles)
-	sections = append(sections, header)
+	if header != "" {
+		for _, line := range strings.Split(header, "\n") {
+			lines = append(lines, pad.Render(line)+emptyBar)
+		}
+	}
 
-	// Issue list
-	issueList := it.renderIssueList(styles)
-	sections = append(sections, issueList)
+	// Issue list with scrollbar
+	listLines := it.renderIssueListLines(styles, contentWidth)
+	barLines := renderScrollbarLines(it.VisibleRows, len(it.Issues), it.ScrollPos, styles)
+	if len(barLines) != it.VisibleRows {
+		barLines = make([]string, it.VisibleRows)
+		for i := range barLines {
+			barLines[i] = emptyBar
+		}
+	}
+	for i, line := range listLines {
+		lines = append(lines, pad.Render(line)+barLines[i])
+	}
 
 	// Analysis section (if there are errors)
 	errorCount := it.countByType(IssueTypeError)
 	if errorCount > 0 {
 		analysis := it.renderAnalysis(styles)
-		sections = append(sections, analysis)
+		for _, line := range strings.Split(analysis, "\n") {
+			lines = append(lines, pad.Render(line)+emptyBar)
+		}
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	return strings.Join(lines, "\n")
 }
 
 // renderHeader renders the issue count header
@@ -278,9 +305,9 @@ func (it *IssuesTab) renderHeader(styles Styles) string {
 }
 
 // renderIssueList renders the list of issues
-func (it *IssuesTab) renderIssueList(styles Styles) string {
+func (it *IssuesTab) renderIssueListLines(styles Styles, maxWidth int) []string {
 	if len(it.Issues) == 0 {
-		return ""
+		return padLines(nil, it.VisibleRows)
 	}
 
 	// Calculate visible range
@@ -294,17 +321,20 @@ func (it *IssuesTab) renderIssueList(styles Styles) string {
 	for i := start; i < end; i++ {
 		issue := it.Issues[i]
 		isSelected := i == it.Selected
-		line := it.renderIssue(issue, isSelected, styles)
+		line := it.renderIssue(issue, isSelected, styles, maxWidth)
 		lines = append(lines, line)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	return padLines(lines, it.VisibleRows)
 }
 
 // renderIssue renders a single issue line
-func (it *IssuesTab) renderIssue(issue Issue, selected bool, styles Styles) string {
+func (it *IssuesTab) renderIssue(issue Issue, selected bool, styles Styles, maxWidth int) string {
 	icons := styles.Icons
-	maxWidth := it.Width - 4
+	lineWidth := maxWidth - 4
+	if lineWidth < 10 {
+		lineWidth = 10
+	}
 
 	// Icon based on type
 	var icon string
@@ -323,8 +353,15 @@ func (it *IssuesTab) renderIssue(issue Issue, selected bool, styles Styles) stri
 
 	// Message (truncate if needed)
 	message := issue.Message
-	if !issue.Expanded && len(message) > maxWidth-20 {
-		message = message[:maxWidth-23] + "..."
+	if !issue.Expanded {
+		maxLen := lineWidth - 20
+		if maxLen < 10 {
+			maxLen = lineWidth
+		}
+		if maxLen > 3 && len(message) > maxLen {
+			cut := maxLen - 3
+			message = message[:cut] + "..."
+		}
 	}
 
 	// File location (shortened)

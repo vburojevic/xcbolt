@@ -818,6 +818,8 @@ func (s Styles) StatusStyle(status string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(s.Colors.Warning)
 	case "running", "in_progress":
 		return lipgloss.NewStyle().Foreground(s.Colors.Running)
+	case "canceled", "cancelled":
+		return lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
 	default:
 		return lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
 	}
@@ -837,6 +839,8 @@ func (s Styles) StatusIcon(status string) string {
 	case "idle":
 		return s.Icons.Idle
 	case "paused":
+		return s.Icons.Paused
+	case "canceled", "cancelled":
 		return s.Icons.Paused
 	default:
 		return s.Icons.Dot

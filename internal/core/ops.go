@@ -401,8 +401,17 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		if logCancel != nil {
 			logCancel()
 		}
-		_ = res
+		pid := parseSimctlLaunchPID(out.String())
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				emitMaybe(emit, Status("run", "Run canceled", map[string]any{"bundleId": appInfo.BundleID}))
+				return RunResult{}, cfg, err
+			}
+			if pid > 0 {
+				emitMaybe(emit, Status("run", "App exited", map[string]any{"pid": pid, "bundleId": appInfo.BundleID, "exitCode": res.ExitCode}))
+				emitMaybe(emit, Result("run", true, map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
+				return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: pid, Target: "simulator", UDID: udid}, cfg, nil
+			}
 			emitMaybe(emit, Err("run", ErrorObject{
 				Code:       "SIM_LAUNCH_FAILED",
 				Message:    "Failed to launch app on simulator",
@@ -411,7 +420,9 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 			}))
 			return RunResult{}, cfg, err
 		}
-		pid := parseFirstInt(out.String())
+		if pid == 0 {
+			pid = parseFirstInt(out.String())
+		}
 		_, _ = AddSession(projectRoot, appInfo.BundleID, pid, "simulator", udid)
 		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
@@ -519,6 +530,7 @@ func simctlChildEnv(env map[string]string) map[string]string {
 }
 
 var mirroredUnifiedLogRE = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\S+)\s+(\S+)\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)$`)
+var simctlLaunchPIDRE = regexp.MustCompile(`(?i)\bpid\b[^0-9]*([0-9]+)`)
 
 type mirroredUnifiedLine struct {
 	Time      string
@@ -542,6 +554,22 @@ func parseMirroredUnifiedLog(line string) (mirroredUnifiedLine, bool) {
 		Subsystem: m[6],
 		Message:   m[7],
 	}, true
+}
+
+func parseSimctlLaunchPID(output string) int {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(strings.ToLower(line), "pid") {
+			continue
+		}
+		if m := simctlLaunchPIDRE.FindStringSubmatch(line); len(m) == 2 {
+			var pid int
+			_, _ = fmt.Sscanf(m[1], "%d", &pid)
+			if pid > 0 {
+				return pid
+			}
+		}
+	}
+	return 0
 }
 
 func formatMirroredUnifiedLine(m mirroredUnifiedLine) string {

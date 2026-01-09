@@ -26,7 +26,7 @@ func (t Tab) String() string {
 	case TabDashboard:
 		return "Dashboard"
 	case TabStream:
-		return "Stream"
+		return "Logs"
 	case TabIssues:
 		return "Issues"
 	default:
@@ -40,7 +40,7 @@ func (t Tab) String() string {
 
 // TabCounts holds the badge counts for each tab
 type TabCounts struct {
-	StreamLines  int // Total lines in stream
+	StreamLines  int // Total lines in logs
 	ErrorCount   int // Number of errors
 	WarningCount int // Number of warnings
 }
@@ -150,8 +150,8 @@ func (tv *TabView) AddRawLine(line string) {
 }
 
 // SetBuildResult updates the summary tab with build results
-func (tv *TabView) SetBuildResult(success bool, duration string, phases []PhaseResult) {
-	tv.SummaryTab.SetResult(success, duration, phases, tv.Counts.ErrorCount, tv.Counts.WarningCount)
+func (tv *TabView) SetBuildResult(status BuildStatus, duration string, phases []PhaseResult) {
+	tv.SummaryTab.SetResult(status, duration, phases, tv.Counts.ErrorCount, tv.Counts.WarningCount)
 }
 
 // =============================================================================
@@ -223,7 +223,7 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 	s := styles.TabBar
 	icons := styles.Icons
 
-	// Build each tab (order: Dashboard, Stream, Issues)
+	// Build each tab (order: Dashboard, Logs, Issues)
 	tabs := []struct {
 		tab   Tab
 		icon  string
@@ -239,7 +239,7 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 		{
 			tab:   TabStream,
 			icon:  icons.TabStream,
-			label: "Stream",
+			label: "Logs",
 			badge: "",
 		},
 		{
@@ -268,7 +268,7 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 			cellWidth = lastTabWidth
 		}
 
-		// Alignment: Dashboard left, Stream center, Issues right
+		// Alignment: Dashboard left, Logs center, Issues right
 		var align lipgloss.Position
 		switch i {
 		case 0:

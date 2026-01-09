@@ -620,19 +620,32 @@ func (v *PhaseView) IsHighlighted(phase, line int) bool {
 
 // View renders the log view
 func (v *PhaseView) View(styles Styles) string {
-	if v.ShowRawMode {
-		return v.renderRaw(styles)
+	var content string
+	switch {
+	case v.ShowRawMode:
+		content = v.renderRaw(styles)
+	case len(v.Phases) == 0:
+		content = v.renderRaw(styles)
+	case v.RenderMode == PhaseRenderCards:
+		content = v.renderCards(styles)
+	default:
+		content = v.renderGrouped(styles)
 	}
-
-	if len(v.Phases) == 0 {
-		return v.renderRaw(styles)
+	if content == "" {
+		return content
 	}
-
-	if v.RenderMode == PhaseRenderCards {
-		return v.renderCards(styles)
+	barWidth := scrollbarWidth
+	if v.Width-barWidth < 1 {
+		barWidth = 0
 	}
-
-	return v.renderGrouped(styles)
+	if barWidth == 0 {
+		return content
+	}
+	contentWidth := v.Width - barWidth
+	if contentWidth < 1 {
+		return content
+	}
+	return withScrollbar(content, v.VisibleRows, contentWidth, v.totalLines(), v.ScrollPos, styles)
 }
 
 // renderRaw renders flat log lines
@@ -769,7 +782,11 @@ func (v *PhaseView) renderCards(styles Styles) string {
 			continue
 		}
 
-		card := v.renderPhaseCard(i, phase, styles, icons, v.Width)
+		width := v.Width - scrollbarWidth
+		if width < 1 {
+			width = v.Width
+		}
+		card := v.renderPhaseCard(i, phase, styles, icons, width)
 		if card == "" {
 			continue
 		}

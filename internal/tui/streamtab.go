@@ -163,7 +163,14 @@ func (st *StreamTab) View(styles Styles) string {
 		gutterWidth += 9 // "HH:MM:SS "
 	}
 
-	contentWidth := st.Width - gutterWidth - 2 // 2 for padding
+	barWidth := scrollbarWidth
+	if st.Width-barWidth < 1 {
+		barWidth = 0
+	}
+	contentWidth := st.Width - gutterWidth - 2 - barWidth // 2 for padding
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 
 	for i := start; i < end; i++ {
 		line := st.Lines[i]
@@ -187,7 +194,14 @@ func (st *StreamTab) View(styles Styles) string {
 		_ = indicator // TODO: position properly
 	}
 
-	return content
+	if barWidth == 0 {
+		return content
+	}
+	contentWidthTotal := st.Width - barWidth
+	if contentWidthTotal < 1 {
+		return content
+	}
+	return withScrollbar(content, st.VisibleRows, contentWidthTotal, len(st.Lines), st.ScrollPos, styles)
 }
 
 // renderLine renders a single line with syntax highlighting

@@ -50,7 +50,7 @@ type keyMap struct {
 	Refresh key.Binding
 
 	// Tab navigation (new tab-based log view)
-	Tab1    key.Binding // Stream tab
+	Tab1    key.Binding // Logs tab
 	Tab2    key.Binding // Issues tab
 	Tab3    key.Binding // Summary tab
 	TabNext key.Binding // Cycle to next tab
@@ -166,7 +166,7 @@ func defaultKeyMap() keyMap {
 		// Tab navigation
 		Tab1: key.NewBinding(
 			key.WithKeys("1"),
-			key.WithHelp("1", "stream tab"),
+			key.WithHelp("1", "logs tab"),
 		),
 		Tab2: key.NewBinding(
 			key.WithKeys("2"),

@@ -32,6 +32,7 @@ type StatusBar struct {
 	// Last result (shown when not running)
 	HasLastResult     bool
 	LastResultSuccess bool
+	LastResultStatus  string
 	LastResultOp      string
 	LastResultTime    string
 
@@ -151,10 +152,19 @@ func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) stri
 	if s.Running {
 		status = s.Spinner.View() + " " + s.Stage
 	} else if s.HasLastResult {
-		if s.LastResultSuccess {
+		switch s.LastResultStatus {
+		case "canceled":
+			status = icons.Paused
+		case "success":
 			status = icons.Success
-		} else {
+		case "error":
 			status = icons.Error
+		default:
+			if s.LastResultSuccess {
+				status = icons.Success
+			} else {
+				status = icons.Error
+			}
 		}
 	} else {
 		status = icons.Idle
@@ -281,9 +291,21 @@ func (s StatusBar) renderRightSection(styles Styles, icons Icons) string {
 		// Last result: icon + duration
 		resultIcon := icons.Success
 		resultStatus := "success"
-		if !s.LastResultSuccess {
+		switch s.LastResultStatus {
+		case "canceled":
+			resultIcon = icons.Paused
+			resultStatus = "canceled"
+		case "error":
 			resultIcon = icons.Error
 			resultStatus = "error"
+		case "success":
+			resultIcon = icons.Success
+			resultStatus = "success"
+		default:
+			if !s.LastResultSuccess {
+				resultIcon = icons.Error
+				resultStatus = "error"
+			}
 		}
 
 		resultStyle := styles.StatusStyle(resultStatus)

@@ -123,7 +123,7 @@ func DefaultCommands() []Command {
 
 		// Utilities
 		{ID: "doctor", Name: "Run Doctor", Description: "Check environment and dependencies", Category: "Utilities"},
-		{ID: "logs", Name: "Stream Logs", Description: "Stream device/simulator logs", Category: "Utilities"},
+		{ID: "logs", Name: "Logs", Description: "Stream device/simulator logs", Category: "Utilities"},
 		{ID: "simulator-boot", Name: "Boot Simulator", Description: "Boot the selected simulator", Category: "Utilities"},
 		{ID: "simulator-shutdown", Name: "Shutdown Simulator", Description: "Shutdown all simulators", Category: "Utilities"},
 		{ID: "open-xcode", Name: "Open in Xcode", Description: "Open workspace/project in Xcode", Category: "Utilities"},
