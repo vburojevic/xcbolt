@@ -406,25 +406,9 @@ const (
 func classifyTabLogLine(line string) TabLineType {
 	lower := strings.ToLower(line)
 
-	// Error patterns
-	if strings.Contains(lower, "error:") ||
-		strings.Contains(lower, "fatal error") ||
-		strings.Contains(lower, "build failed") ||
-		strings.Contains(lower, "❌") ||
-		strings.Contains(line, "✗") {
-		return TabLineTypeError
-	}
-
-	// Warning patterns
-	if strings.Contains(lower, "warning:") ||
-		strings.Contains(lower, "⚠") {
-		return TabLineTypeWarning
-	}
-
-	// Note patterns
-	if strings.Contains(lower, "note:") ||
-		strings.Contains(lower, "remark:") {
-		return TabLineTypeNote
+	// Errors/warnings/notes first (use shared heuristics)
+	if severity := issueSeverity(line); severity != TabLineTypeNormal {
+		return severity
 	}
 
 	// Progress patterns

@@ -1069,19 +1069,18 @@ func categorizeLogLine(line string) LogLine {
 		}
 	}
 
-	// Errors - check various patterns
-	if strings.Contains(lower, "error:") ||
-		strings.Contains(line, "❌") ||
-		(strings.Contains(lower, "failed") && !strings.Contains(lower, "test")) {
+	// Errors/warnings/notes (shared heuristics)
+	switch issueSeverity(line) {
+	case TabLineTypeError:
 		logLine.Type = LogLineError
 		logLine.FilePath, logLine.LineNum = extractFileLocation(line)
 		return logLine
-	}
-
-	// Warnings
-	if strings.Contains(lower, "warning:") || strings.Contains(line, "⚠") {
+	case TabLineTypeWarning:
 		logLine.Type = LogLineWarning
 		logLine.FilePath, logLine.LineNum = extractFileLocation(line)
+		return logLine
+	case TabLineTypeNote:
+		logLine.Type = LogLineInfo
 		return logLine
 	}
 
