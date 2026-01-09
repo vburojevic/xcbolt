@@ -27,7 +27,9 @@ func newRunCmd() *cobra.Command {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			_, _, err = core.Run(ctx, ac.ProjectRoot, ac.Config, console, ac.Emitter)
+			_, cfg2, err := core.Run(ctx, ac.ProjectRoot, ac.Config, console, ac.Emitter)
+			// Persist auto-selected scheme/config for future runs.
+			persistConfigIfChanged(ac, cfg2)
 			return err
 		},
 	}

@@ -80,11 +80,14 @@ func fuzzyMatch(haystack, needle string) bool {
 // SelectorModel is a fuzzy-search selector popup
 type SelectorModel struct {
 	// Configuration
-	title       string
-	items       []SelectorItem
-	recentItems []SelectorItem // Recent items to pin at top
-	width       int
-	maxVisible  int
+	title             string
+	items             []SelectorItem
+	recentItems       []SelectorItem // Recent items to pin at top
+	width             int
+	maxVisible        int
+	selectedID        string
+	keepSelected      bool
+	showSelectedBadge bool
 
 	// State
 	input    textinput.Model
@@ -126,15 +129,33 @@ func NewSelector(title string, items []SelectorItem, screenWidth int, styles Sty
 	}
 
 	return SelectorModel{
-		title:      title,
-		items:      items,
-		width:      width,
-		maxVisible: maxVisible,
-		input:      ti,
-		filtered:   items, // Initially show all
-		cursor:     0,
-		styles:     styles,
+		title:             title,
+		items:             items,
+		width:             width,
+		maxVisible:        maxVisible,
+		input:             ti,
+		filtered:          items, // Initially show all
+		cursor:            0,
+		styles:            styles,
+		showSelectedBadge: true,
 	}
+}
+
+// NewSelectorWithSelected creates a selector with a pre-selected item (by ID).
+func NewSelectorWithSelected(title string, items []SelectorItem, selectedID string, screenWidth int, styles Styles) SelectorModel {
+	m := NewSelector(title, items, screenWidth, styles)
+	if selectedID == "" {
+		return m
+	}
+	m.selectedID = selectedID
+	m.keepSelected = true
+	for i, item := range m.filtered {
+		if item.ID == selectedID {
+			m.cursor = i
+			break
+		}
+	}
+	return m
 }
 
 // NewSelectorWithRecents creates a selector with recent items pinned at top
@@ -168,12 +189,14 @@ func (m SelectorModel) Update(msg tea.Msg) (SelectorModel, tea.Cmd, *SelectorRes
 			return m, nil, nil
 
 		case "up", "ctrl+p":
+			m.keepSelected = false
 			if m.cursor > 0 {
 				m.cursor--
 			}
 			return m, nil, nil
 
 		case "down", "ctrl+n":
+			m.keepSelected = false
 			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
 			}
@@ -203,7 +226,9 @@ func (m *SelectorModel) filterItems() {
 
 	if query == "" {
 		m.filtered = m.items
-		m.cursor = 0
+		if !m.applySelectedCursor() {
+			m.cursor = 0
+		}
 		return
 	}
 
@@ -235,10 +260,25 @@ func (m *SelectorModel) filterItems() {
 		m.filtered[i] = s.item
 	}
 
-	// Reset cursor if out of bounds
-	if m.cursor >= len(m.filtered) {
-		m.cursor = maxInt(0, len(m.filtered)-1)
+	if !m.applySelectedCursor() {
+		// Reset cursor if out of bounds
+		if m.cursor >= len(m.filtered) {
+			m.cursor = maxInt(0, len(m.filtered)-1)
+		}
 	}
+}
+
+func (m *SelectorModel) applySelectedCursor() bool {
+	if !m.keepSelected || m.selectedID == "" || len(m.filtered) == 0 {
+		return false
+	}
+	for i, item := range m.filtered {
+		if item.ID == m.selectedID {
+			m.cursor = i
+			return true
+		}
+	}
+	return false
 }
 
 // View renders the selector
@@ -404,6 +444,10 @@ func (m SelectorModel) renderItem(item SelectorItem, isSelected bool, icons Icon
 			metaStyle = s.StatusStyle("running")
 		}
 		line += " " + metaStyle.Render(item.Meta)
+	}
+	if m.showSelectedBadge && m.selectedID != "" && item.ID == m.selectedID && !strings.Contains(line, "[current]") {
+		badgeStyle := s.StatusStyle("warning")
+		line += " " + badgeStyle.Render("[current]")
 	}
 
 	return line

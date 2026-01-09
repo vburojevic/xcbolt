@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
+	"path"
 	"strings"
 	"sync"
 )
@@ -117,6 +119,10 @@ type logSink struct {
 	prettyLines   int
 	switchedToRaw bool
 	mu            sync.Mutex
+
+	spmAction string
+	spmNames  []string
+	spmSeen   map[string]struct{}
 }
 
 func newXcodebuildLogSink(ctx context.Context, cmd string, cfg Config, emit Emitter) *logSink {
@@ -188,6 +194,9 @@ func (s *logSink) HandleLine(line string) {
 	if strings.TrimSpace(line) == "" {
 		return
 	}
+	if s.handleSwiftPM(line) {
+		return
+	}
 
 	var (
 		emitRaw      bool
@@ -231,8 +240,140 @@ func (s *logSink) HandleLine(line string) {
 	}
 }
 
+func (s *logSink) handleSwiftPM(line string) bool {
+	action, name, immediate := parseSwiftPMLine(line)
+	if immediate {
+		emitMaybe(s.emit, Log(s.cmd, "SwiftPM: "+action))
+		return true
+	}
+	if action == "" {
+		msg := s.flushSPMBatch()
+		if msg != "" {
+			emitMaybe(s.emit, Log(s.cmd, msg))
+		}
+		return false
+	}
+
+	msg := ""
+	s.mu.Lock()
+	if s.spmAction != "" && s.spmAction != action {
+		msg = s.formatSPMBatchLocked()
+		s.resetSPMBatchLocked()
+	}
+	if s.spmSeen == nil {
+		s.spmSeen = map[string]struct{}{}
+	}
+	if name != "" {
+		if _, ok := s.spmSeen[name]; !ok {
+			s.spmSeen[name] = struct{}{}
+			s.spmNames = append(s.spmNames, name)
+		}
+	}
+	s.spmAction = action
+	s.mu.Unlock()
+
+	if msg != "" {
+		emitMaybe(s.emit, Log(s.cmd, msg))
+	}
+	return true
+}
+
+func (s *logSink) flushSPMBatch() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.spmAction == "" || len(s.spmNames) == 0 {
+		s.resetSPMBatchLocked()
+		return ""
+	}
+	msg := s.formatSPMBatchLocked()
+	s.resetSPMBatchLocked()
+	return msg
+}
+
+func (s *logSink) formatSPMBatchLocked() string {
+	if s.spmAction == "" || len(s.spmNames) == 0 {
+		return ""
+	}
+	maxNames := 3
+	names := s.spmNames
+	if len(names) > maxNames {
+		names = names[:maxNames]
+	}
+	suffix := ""
+	if len(s.spmNames) > maxNames {
+		suffix = "…"
+	}
+	return fmt.Sprintf("SwiftPM: %s %d package(s) (%s%s)", s.spmAction, len(s.spmNames), strings.Join(names, ", "), suffix)
+}
+
+func (s *logSink) resetSPMBatchLocked() {
+	s.spmAction = ""
+	s.spmNames = nil
+	s.spmSeen = nil
+}
+
+func parseSwiftPMLine(line string) (action string, name string, immediate bool) {
+	if line == "Resolve Package Graph" {
+		return "Resolving package graph", "", true
+	}
+	if strings.HasPrefix(line, "Updating from ") {
+		return "Updating", repoNameFromURL(strings.TrimPrefix(line, "Updating from ")), false
+	}
+	if strings.HasPrefix(line, "Fetching from ") {
+		return "Fetching", repoNameFromURL(strings.TrimPrefix(line, "Fetching from ")), false
+	}
+	if strings.HasPrefix(line, "Creating working copy of package") {
+		return "Checking out", extractQuotedName(line), false
+	}
+	if strings.HasPrefix(line, "Checking out ") {
+		return "Checking out", extractQuotedName(line), false
+	}
+	return "", "", false
+}
+
+func extractQuotedName(line string) string {
+	// Handles curly quotes ‘name’ or standard quotes "name".
+	if i := strings.IndexRune(line, '‘'); i >= 0 {
+		if j := strings.IndexRune(line[i+1:], '’'); j >= 0 {
+			return line[i+1 : i+1+j]
+		}
+	}
+	if i := strings.IndexRune(line, '"'); i >= 0 {
+		if j := strings.IndexRune(line[i+1:], '"'); j >= 0 {
+			return line[i+1 : i+1+j]
+		}
+	}
+	return ""
+}
+
+func repoNameFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "git@") {
+		if idx := strings.LastIndex(raw, ":"); idx != -1 {
+			raw = raw[idx+1:]
+		}
+		raw = strings.TrimSuffix(raw, ".git")
+		return path.Base(raw)
+	}
+	if u, err := url.Parse(raw); err == nil && u.Path != "" {
+		p := strings.TrimPrefix(u.Path, "/")
+		p = strings.TrimSuffix(p, ".git")
+		return path.Base(p)
+	}
+	raw = strings.TrimSuffix(raw, ".git")
+	return path.Base(raw)
+}
+
 func (s *logSink) Finalize(runErr error, exitCode int) {
 	if s == nil || s.formatter == nil {
+		if s != nil {
+			if msg := s.flushSPMBatch(); msg != "" {
+				emitMaybe(s.emit, Log(s.cmd, msg))
+			}
+		}
 		return
 	}
 	closeErr := s.formatter.Close()

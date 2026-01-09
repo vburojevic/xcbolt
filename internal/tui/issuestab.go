@@ -57,8 +57,10 @@ type Issue struct {
 
 // IssuesTab displays issues sorted by severity
 type IssuesTab struct {
-	Issues   []Issue
-	Selected int // Currently selected issue
+	Issues       []Issue
+	Selected     int // Currently selected issue
+	Running      bool
+	SpinnerFrame int
 
 	// Scroll state
 	ScrollPos   int
@@ -78,6 +80,16 @@ func NewIssuesTab() *IssuesTab {
 		Issues:        make([]Issue, 0, 100),
 		locationRegex: regexp.MustCompile(`([^\s:]+):(\d+):(\d+):`),
 	}
+}
+
+// SetRunning updates the running state for empty view hints.
+func (it *IssuesTab) SetRunning(running bool) {
+	it.Running = running
+}
+
+// AdvanceSpinner advances the idle spinner frame.
+func (it *IssuesTab) AdvanceSpinner() {
+	it.SpinnerFrame = (it.SpinnerFrame + 1) % len(spinnerFrames)
 }
 
 // SetSize updates dimensions
@@ -481,6 +493,26 @@ func (it *IssuesTab) getByType(issueType IssueType) []Issue {
 // emptyView renders the empty state
 func (it *IssuesTab) emptyView(styles Styles) string {
 	icons := styles.Icons
+
+	if it.Running {
+		spinner := spinnerFrames[it.SpinnerFrame]
+		spinStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent).Bold(true)
+		msg := lipgloss.NewStyle().
+			Foreground(styles.Colors.TextSubtle).
+			Render("Scanning for issues...")
+		hint := lipgloss.NewStyle().
+			Foreground(styles.Colors.TextMuted).
+			Render("Build in progress")
+
+		content := lipgloss.JoinVertical(lipgloss.Center, spinStyle.Render(spinner), "", msg, hint)
+		return lipgloss.Place(
+			it.Width,
+			it.Height,
+			lipgloss.Center,
+			lipgloss.Center,
+			content,
+		)
+	}
 
 	// Large icon
 	iconStyle := lipgloss.NewStyle().

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -156,6 +157,57 @@ func SimctlOpenURL(ctx context.Context, udid string, url string) error {
 		Args: []string{"simctl", "openurl", udid, url},
 	})
 	return err
+}
+
+// SimctlLogStream streams unified logs for a simulator.
+func SimctlLogStream(ctx context.Context, udid string, predicate string, emit Emitter) error {
+	if udid == "" {
+		return errors.New("missing simulator udid")
+	}
+	args := []string{"simctl", "spawn", udid, "log", "stream", "--style", "compact", "--level", "debug"}
+	if predicate != "" {
+		args = append(args, "--predicate", predicate)
+	}
+	_, err := RunStreaming(ctx, CmdSpec{
+		Path: "xcrun",
+		Args: args,
+		StdoutLine: func(s string) {
+			if emit != nil {
+				if isSimctlLogHeader(s) {
+					emit.Emit(LogStream("run", s, "system"))
+				} else {
+					emit.Emit(LogStream("run", formatSimctlLogLine(s), "unified"))
+				}
+			}
+		},
+		StderrLine: func(s string) {
+			if emit != nil {
+				emit.Emit(Log("simulator", s))
+			}
+		},
+	})
+	return err
+}
+
+var simctlLogLineRE = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\S+)\s+(\S+)\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)$`)
+
+func formatSimctlLogLine(line string) string {
+	line = strings.TrimSpace(line)
+	m := simctlLogLineRE.FindStringSubmatch(line)
+	if len(m) != 8 {
+		return line
+	}
+	timePart := m[2]
+	level := m[3]
+	proc := m[4]
+	pid := m[5]
+	msg := m[7]
+	return fmt.Sprintf("%s %s %s[%s]\n%s", timePart, level, proc, pid, msg)
+}
+
+func isSimctlLogHeader(line string) bool {
+	l := strings.ToLower(strings.TrimSpace(line))
+	return strings.Contains(l, "filtering the log data using")
 }
 
 func SimctlScreenshot(ctx context.Context, udid string, outPath string) error {

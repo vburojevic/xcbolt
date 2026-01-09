@@ -12,6 +12,7 @@ type AppBundleInfo struct {
 	BundleID     string
 	DisplayName  string
 	BundleName   string
+	Executable   string
 	Version      string
 	BuildVersion string
 }
@@ -39,6 +40,7 @@ func ReadAppBundleInfo(appPath string) (AppBundleInfo, error) {
 		BundleID:     get("CFBundleIdentifier"),
 		DisplayName:  get("CFBundleDisplayName"),
 		BundleName:   get("CFBundleName"),
+		Executable:   get("CFBundleExecutable"),
 		Version:      get("CFBundleShortVersionString"),
 		BuildVersion: get("CFBundleVersion"),
 	}, nil

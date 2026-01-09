@@ -69,7 +69,8 @@ func newDeviceCmd() *cobra.Command {
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
-				_, err = core.DevicectlLaunchApp(ctx, args[0], args[1], console, ac.Emitter)
+				info := core.AppBundleInfo{BundleID: args[1]}
+				_, err = core.DevicectlLaunchApp(ctx, args[0], args[1], console, nil, info, false, ac.Emitter)
 				return err
 			},
 		}

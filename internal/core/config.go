@@ -33,11 +33,15 @@ type XcodebuildConfig struct {
 	Env           map[string]string `json:"env,omitempty"`
 	LogFormat     string            `json:"logFormat,omitempty"`
 	LogFormatArgs []string          `json:"logFormatArgs,omitempty"`
+	DryRun        bool              `json:"dryRun,omitempty"`
 }
 
 type LaunchConfig struct {
-	Options []string          `json:"options,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	Options           []string          `json:"options,omitempty"`
+	Env               map[string]string `json:"env,omitempty"`
+	StreamUnifiedLogs *bool             `json:"streamUnifiedLogs,omitempty"`
+	StreamSystemLogs  *bool             `json:"streamSystemLogs,omitempty"`
+	ConsoleLogLevels  map[string]bool   `json:"consoleLogLevels,omitempty"`
 }
 
 type TUIConfig struct {
@@ -66,6 +70,15 @@ type Config struct {
 }
 
 func DefaultConfig(projectRoot string) Config {
+	streamUnified := true
+	streamSystem := false
+	consoleLevels := map[string]bool{
+		"D": true,
+		"I": true,
+		"W": true,
+		"E": true,
+		"F": true,
+	}
 	return Config{
 		Version:           ConfigVersion,
 		Configuration:     "Debug",
@@ -73,7 +86,7 @@ func DefaultConfig(projectRoot string) Config {
 		DerivedDataPath:   filepath.Join(projectRoot, ".xcbolt", "DerivedData"),
 		ResultBundlesPath: filepath.Join(projectRoot, ".xcbolt", "Results"),
 		Xcodebuild:        XcodebuildConfig{Env: map[string]string{}, Options: []string{}, LogFormat: "auto", LogFormatArgs: []string{}},
-		Launch:            LaunchConfig{Env: map[string]string{}, Options: []string{}},
+		Launch:            LaunchConfig{Env: map[string]string{}, Options: []string{}, StreamUnifiedLogs: &streamUnified, StreamSystemLogs: &streamSystem, ConsoleLogLevels: consoleLevels},
 		TUI:               TUIConfig{ShowAllLogs: true},
 	}
 }

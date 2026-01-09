@@ -141,6 +141,9 @@ func ShowBuildSettings(ctx context.Context, projectRoot string, cfg Config) (Bui
 	if dest := BuildDestinationString(cfg); dest != "" {
 		args = append(args, "-destination", dest)
 	}
+	if cfg.DerivedDataPath != "" {
+		args = append(args, "-derivedDataPath", cfg.DerivedDataPath)
+	}
 
 	var lines []string
 	_, err := RunStreaming(ctx, CmdSpec{

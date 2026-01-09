@@ -33,10 +33,15 @@ const (
 
 // RunModeState tracks the state for run mode split view
 type RunModeState struct {
-	Active      bool     // Whether run mode split view is active
-	ConsoleLogs []string // App console output (separate from build logs)
-	FocusPane   Pane     // Which pane has focus
-	ConsolePos  int      // Scroll position for console pane
+	Active        bool     // Whether run mode split view is active
+	ConsoleLogs   []string // App console output (separate from build logs)
+	FocusPane     Pane     // Which pane has focus
+	ConsolePos    int      // Scroll position for console pane
+	TopHeight     int      // Cached top pane height
+	BottomHeight  int      // Cached bottom pane height
+	Status        string   // Last run status message
+	StatusAt      time.Time
+	ConsoleFollow bool
 }
 
 // LogViewMode controls the main log presentation.
@@ -60,10 +65,11 @@ type contextLoadedMsg struct {
 }
 
 type ConfigOverrides struct {
-	LogFormat        string
-	LogFormatArgs    []string
-	HasLogFormat     bool
-	HasLogFormatArgs bool
+	LogFormat         string
+	LogFormatArgs     []string
+	HasLogFormat      bool
+	HasLogFormatArgs  bool
+	UseXcodebuildList bool
 }
 
 type opDoneMsg struct {
@@ -74,6 +80,11 @@ type opDoneMsg struct {
 	run   *core.RunResult
 	test  *core.TestResult
 }
+
+const (
+	consoleMetaPrefix   = "\x00m"
+	consoleSystemPrefix = "\x00s"
+)
 
 type tickMsg time.Time
 
@@ -155,6 +166,11 @@ type Model struct {
 	eventCh    <-chan core.Event
 	doneCh     <-chan opDoneMsg
 	tickCount  int // For spinner animation timing
+	opStart    time.Time
+	lastEvent  time.Time
+	lastLog    time.Time
+	lastBeat   time.Time
+	lastStatus string
 
 	// Progress tracking (for stage indicators)
 	currentStage  string
@@ -236,6 +252,7 @@ func (m *Model) setStatus(msg string) {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
+		func() tea.Msg { return statusMsg("Loading project context…") },
 		loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride),
 		tickCmd(), // Start tick for loading spinner animation
 	)
@@ -256,7 +273,11 @@ func loadContextCmd(projectRoot, configPath string, overrides ConfigOverrides) t
 		defer cancel()
 
 		emit := core.NewTextEmitter(ioDiscard{})
-		info, cfg2, err := core.DiscoverContext(ctx, projectRoot, cfg, emit)
+		info, cfg2, err := core.DiscoverContext(ctx, projectRoot, cfg, emit, core.ContextOptions{
+			UseXcodebuildList:     overrides.UseXcodebuildList,
+			AllowXcodebuildList:   true,
+			XcodebuildListTimeout: 5 * time.Second,
+		})
 		if err != nil {
 			return contextLoadedMsg{err: err}
 		}
@@ -339,6 +360,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tickCount++
 			if m.tickCount%15 == 0 {
 				m.tabView.SummaryTab.AdvanceSpinner()
+				m.tabView.IssuesTab.AdvanceSpinner()
+			}
+			if m.running {
+				m.updateIdleHints(time.Time(msg))
 			}
 		}
 
@@ -347,6 +372,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+
+	case tea.MouseMsg:
+		m.handleMouse(msg)
 
 	case wizardDoneMsg:
 		m.mode = ModeNormal
@@ -405,7 +433,7 @@ func (m *Model) openSchemeSelector() {
 
 	items := SchemeItems(m.info.Schemes)
 	// Pass screen width - selector calculates its own width (50-60%)
-	m.selector = NewSelector("Select Scheme", items, m.width, m.styles)
+	m.selector = NewSelectorWithSelected("Select Scheme", items, m.cfg.Scheme, m.width, m.styles)
 	m.selectorType = SelectorScheme
 	m.mode = ModeSelector
 }
@@ -417,7 +445,7 @@ func (m *Model) openConfigurationSelector() {
 		return
 	}
 
-	m.selector = NewSelector("Select Configuration", items, m.width, m.styles)
+	m.selector = NewSelectorWithSelected("Select Configuration", items, m.cfg.Configuration, m.width, m.styles)
 	m.selectorType = SelectorConfiguration
 	m.mode = ModeSelector
 }
@@ -454,7 +482,7 @@ func (m *Model) openDestinationSelector() {
 	}
 
 	// Pass screen width - selector calculates its own width (50-60%)
-	m.selector = NewSelector("Select Destination", items, m.width, m.styles)
+	m.selector = NewSelectorWithSelected("Select Destination", items, m.cfg.Destination.UDID, m.width, m.styles)
 	m.selectorType = SelectorDestination
 	m.mode = ModeSelector
 }
@@ -520,6 +548,135 @@ func minInt(a, b int) int {
 	return b
 }
 
+func formatShortDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	seconds := int(d.Seconds())
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	minutes := seconds / 60
+	secs := seconds % 60
+	return fmt.Sprintf("%dm%02ds", minutes, secs)
+}
+
+func (m Model) splitHeights(statusBarContent, progressBarContent, hintsBarContent string) (int, int) {
+	if m.layout.MinimalMode {
+		return m.layout.ContentHeight(), 0
+	}
+
+	header := m.layout.RenderHeader(statusBarContent, m.styles)
+	hints := m.layout.RenderHintsBar(hintsBarContent, m.styles)
+	headerHeight := lipgloss.Height(header)
+	hintsHeight := lipgloss.Height(hints)
+
+	totalContentHeight := m.layout.Height - headerHeight - hintsHeight - 1
+	if m.layout.ShowProgressBar && progressBarContent != "" {
+		progress := m.layout.RenderProgressBar(progressBarContent, m.styles)
+		totalContentHeight -= lipgloss.Height(progress)
+	}
+	totalContentHeight = maxInt(0, totalContentHeight)
+
+	topHeight := totalContentHeight * 60 / 100
+	bottomHeight := totalContentHeight - topHeight
+	return topHeight, bottomHeight
+}
+
+func (m Model) consolePaneHeight() int {
+	if m.runMode.Active {
+		if m.runMode.BottomHeight > 0 {
+			return m.runMode.BottomHeight
+		}
+		if m.layout.MinimalMode {
+			return 0
+		}
+	}
+	return m.layout.SplitBottomHeight()
+}
+
+func (m *Model) logIdleDuration(now time.Time) time.Duration {
+	if !m.running {
+		return 0
+	}
+	if !m.lastLog.IsZero() {
+		return now.Sub(m.lastLog)
+	}
+	if !m.opStart.IsZero() {
+		return now.Sub(m.opStart)
+	}
+	return 0
+}
+
+func (m *Model) updateIdleHints(now time.Time) {
+	idle := m.logIdleDuration(now)
+	m.tabView.SummaryTab.SetLogIdle(idle)
+	m.maybeHeartbeat(now, idle)
+}
+
+func (m *Model) maybeHeartbeat(now time.Time, idle time.Duration) {
+	const idleThreshold = 8 * time.Second
+	const heartbeatInterval = 15 * time.Second
+
+	if idle < idleThreshold {
+		return
+	}
+	if !m.lastBeat.IsZero() && now.Sub(m.lastBeat) < heartbeatInterval {
+		return
+	}
+	m.lastBeat = now
+
+	line := fmt.Sprintf("…still running (idle %s)", formatShortDuration(idle))
+	m.appendLog(line)
+	m.appendStreamLine(line)
+	m.tabView.AddRawLine(line)
+}
+
+func (m Model) activityLine() string {
+	if !m.running {
+		return ""
+	}
+	s := m.styles
+	now := time.Now()
+
+	spinnerStyle := lipgloss.NewStyle().Foreground(s.Colors.Accent).Bold(true)
+	labelStyle := lipgloss.NewStyle().Foreground(s.Colors.Text)
+	detailStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
+
+	stage := m.currentStage
+	if stage == "" {
+		stage = strings.ToUpper(m.runningCmd)
+	}
+	status := m.lastStatus
+	if status == "" {
+		status = "Working..."
+	}
+
+	idle := m.logIdleDuration(now)
+	idleHint := ""
+	if idle > 8*time.Second {
+		idleHint = "idle " + formatShortDuration(idle)
+	}
+	elapsed := formatShortDuration(now.Sub(m.opStart))
+
+	parts := []string{
+		spinnerStyle.Render(m.spinner.View()),
+		labelStyle.Render(stage),
+		detailStyle.Render(status),
+	}
+	if idleHint != "" {
+		parts = append(parts, detailStyle.Render(idleHint))
+	}
+	parts = append(parts, detailStyle.Render(elapsed))
+
+	line := lipgloss.JoinHorizontal(lipgloss.Left, parts...)
+	maxWidth := maxInt(0, m.width-2)
+	if maxWidth > 0 {
+		line = lipgloss.NewStyle().MaxWidth(maxWidth).Render(line)
+	}
+	return line
+}
+
 func (m *Model) openPalette() {
 	// Pass screen width - palette calculates its own width (50-60%)
 	m.palette = NewPalette(m.width, m.styles)
@@ -545,8 +702,31 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		if !m.running {
 			return m.startOp("clean")
 		}
+	case "clean-derived":
+		if !m.running {
+			return m.startOp("clean-derived")
+		}
+	case "clean-results":
+		if !m.running {
+			return m.startOp("clean-results")
+		}
+	case "clean-sessions":
+		if !m.running {
+			return m.startOp("clean-sessions")
+		}
+	case "clean-spm-cache":
+		if !m.running {
+			return m.startOp("clean-spm-cache")
+		}
 	case "stop":
-		m.setStatus("Stop not implemented yet")
+		if m.running {
+			if m.cancelFn != nil {
+				m.cancelFn()
+				m.setStatus("Canceling…")
+			}
+			return nil
+		}
+		return m.stopApp()
 
 	// Archive/Profile (not implemented yet)
 	case "archive", "archive-appstore", "archive-adhoc", "profile", "analyze":
@@ -559,6 +739,56 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		m.openConfigurationSelector()
 	case "destination":
 		m.openDestinationSelector()
+	case "toggle-dry-run":
+		m.cfg.Xcodebuild.DryRun = !m.cfg.Xcodebuild.DryRun
+		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+			m.lastErr = err.Error()
+		}
+		if m.cfg.Xcodebuild.DryRun {
+			m.setStatus("Dry run enabled")
+		} else {
+			m.setStatus("Dry run disabled")
+		}
+	case "toggle-unified-logs":
+		cur := true
+		if m.cfg.Launch.StreamUnifiedLogs != nil {
+			cur = *m.cfg.Launch.StreamUnifiedLogs
+		}
+		next := !cur
+		m.cfg.Launch.StreamUnifiedLogs = &next
+		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+			m.lastErr = err.Error()
+		}
+		if next {
+			m.setStatus("Unified logs enabled")
+		} else {
+			m.setStatus("Unified logs disabled")
+		}
+	case "toggle-system-logs":
+		cur := false
+		if m.cfg.Launch.StreamSystemLogs != nil {
+			cur = *m.cfg.Launch.StreamSystemLogs
+		}
+		next := !cur
+		m.cfg.Launch.StreamSystemLogs = &next
+		if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+			m.lastErr = err.Error()
+		}
+		if next {
+			m.setStatus("System logs enabled")
+		} else {
+			m.setStatus("System logs disabled")
+		}
+	case "toggle-log-debug":
+		m.toggleConsoleLevel("D", "Debug")
+	case "toggle-log-info":
+		m.toggleConsoleLevel("I", "Info")
+	case "toggle-log-warn":
+		m.toggleConsoleLevel("W", "Warning")
+	case "toggle-log-error":
+		m.toggleConsoleLevel("E", "Error")
+	case "toggle-log-fault":
+		m.toggleConsoleLevel("F", "Fault")
 	case "init":
 		m.mode = ModeWizard
 		m.wizard = newWizard(m.info, m.cfg, m.width)
@@ -574,6 +804,10 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		m.setStatus("Use CLI: xcbolt logs")
 	case "simulator-boot", "simulator-shutdown":
 		m.setStatus("Use CLI: xcbolt simulator")
+	case "open-xcode":
+		return m.openInXcode()
+	case "open-project":
+		return m.openProject()
 
 	// Navigation
 	case "help":
@@ -693,6 +927,7 @@ func (m *Model) syncStatusBarState() {
 	m.statusBar.Configuration = m.cfg.Configuration
 	m.statusBar.Destination = m.cfg.Destination.Name
 	m.statusBar.DestOS = m.cfg.Destination.OS
+	m.statusBar.DryRun = m.cfg.Xcodebuild.DryRun
 	m.statusBar.Running = m.running
 	m.statusBar.RunningCmd = m.runningCmd
 	m.statusBar.Stage = m.currentStage
@@ -713,6 +948,7 @@ func (m *Model) syncStatusBarState() {
 		targetDevice,
 		m.cfg.Configuration,
 	)
+	m.tabView.IssuesTab.SetRunning(m.running)
 
 	// Sync system info to Dashboard
 	simulatorStatus := ""
@@ -832,7 +1068,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.Cancel):
 		if m.running && m.cancelFn != nil {
 			m.cancelFn()
-			m.setStatus("Canceled")
+			m.setStatus("Canceling…")
+		} else if m.runMode.Active && !m.running {
+			return m.stopApp()
 		}
 
 	case keyMatches(msg, m.keys.Build):
@@ -854,6 +1092,16 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		if !m.running {
 			return m.startOp("clean")
 		}
+
+	case keyMatches(msg, m.keys.Stop):
+		if m.running {
+			if m.cancelFn != nil {
+				m.cancelFn()
+				m.setStatus("Canceling…")
+			}
+			break
+		}
+		return m.stopApp()
 
 	case keyMatches(msg, m.keys.Scheme):
 		m.openSchemeSelector()
@@ -957,39 +1205,40 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.ScrollBottom):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
-			maxPos := len(m.runMode.ConsoleLogs) - m.layout.SplitBottomHeight()
+			maxPos := len(m.runMode.ConsoleLogs) - m.consolePaneHeight()
 			if maxPos < 0 {
 				maxPos = 0
 			}
 			m.runMode.ConsolePos = maxPos
+			m.runMode.ConsoleFollow = true
 		} else {
 			m.tabView.GotoBottom()
 		}
 
 	case keyMatches(msg, m.keys.PageUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
-			m.scrollConsole(-m.layout.SplitBottomHeight())
+			m.scrollConsole(-m.consolePaneHeight())
 		} else {
 			m.tabView.ScrollUp(10)
 		}
 
 	case keyMatches(msg, m.keys.PageDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
-			m.scrollConsole(m.layout.SplitBottomHeight())
+			m.scrollConsole(m.consolePaneHeight())
 		} else {
 			m.tabView.ScrollDown(10)
 		}
 
 	case keyMatches(msg, m.keys.HalfPageUp):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
-			m.scrollConsole(-m.layout.SplitBottomHeight() / 2)
+			m.scrollConsole(-m.consolePaneHeight() / 2)
 		} else {
 			m.tabView.ScrollUp(5)
 		}
 
 	case keyMatches(msg, m.keys.HalfPageDown):
 		if m.runMode.Active && m.runMode.FocusPane == PaneConsole {
-			m.scrollConsole(m.layout.SplitBottomHeight() / 2)
+			m.scrollConsole(m.consolePaneHeight() / 2)
 		} else {
 			m.tabView.ScrollDown(5)
 		}
@@ -1049,6 +1298,61 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+func (m *Model) handleMouse(msg tea.MouseMsg) {
+	switch msg.Type {
+	case tea.MouseWheelUp, tea.MouseWheelDown:
+		delta := 3
+		if msg.Type == tea.MouseWheelUp {
+			delta = -3
+		}
+		if m.runMode.Active {
+			if m.mouseInConsolePane(msg.Y) {
+				m.runMode.FocusPane = PaneConsole
+				m.scrollConsole(delta)
+			} else {
+				m.runMode.FocusPane = PaneBuild
+				if delta < 0 {
+					m.tabView.ScrollUp(-delta)
+				} else {
+					m.tabView.ScrollDown(delta)
+				}
+			}
+			return
+		}
+		if delta < 0 {
+			m.tabView.ScrollUp(-delta)
+		} else {
+			m.tabView.ScrollDown(delta)
+		}
+	}
+}
+
+func (m *Model) mouseInConsolePane(y int) bool {
+	if !m.runMode.Active {
+		return false
+	}
+	if m.layout.MinimalMode {
+		return true
+	}
+	headerHeight := 2
+	hintsHeight := 2
+	if m.layout.MinimalMode {
+		headerHeight = 1
+		hintsHeight = 0
+	}
+	contentStart := headerHeight
+	contentEnd := m.height - hintsHeight
+	if y < contentStart || y >= contentEnd {
+		return false
+	}
+	topHeight := m.runMode.TopHeight
+	if topHeight == 0 {
+		topHeight = m.layout.SplitTopHeight()
+	}
+	dividerY := contentStart + topHeight
+	return y > dividerY
+}
+
 // openInXcode opens the project in Xcode
 func (m *Model) openInXcode() tea.Cmd {
 	// Prefer workspace over project
@@ -1071,6 +1375,27 @@ func (m *Model) openInXcode() tea.Cmd {
 	}
 }
 
+// openProject reveals the project/workspace in Finder
+func (m *Model) openProject() tea.Cmd {
+	var path string
+	if m.cfg.Workspace != "" {
+		path = filepath.Join(m.projectRoot, m.cfg.Workspace)
+	} else if m.cfg.Project != "" {
+		path = filepath.Join(m.projectRoot, m.cfg.Project)
+	} else {
+		m.setStatus("No project configured")
+		return nil
+	}
+
+	return func() tea.Msg {
+		cmd := exec.Command("open", "-R", path)
+		if err := cmd.Start(); err != nil {
+			return statusMsg("Failed to open project")
+		}
+		return statusMsg("Opened project in Finder")
+	}
+}
+
 // openInEditor opens the project in $EDITOR
 func (m *Model) openInEditor() tea.Cmd {
 	editor := os.Getenv("EDITOR")
@@ -1085,6 +1410,133 @@ func (m *Model) openInEditor() tea.Cmd {
 		}
 		return statusMsg("Opened in " + editor)
 	}
+}
+
+type stopTarget struct {
+	BundleID  string
+	PID       int
+	Target    string
+	UDID      string
+	SessionID string
+}
+
+func (m *Model) stopApp() tea.Cmd {
+	return func() tea.Msg {
+		target, err := m.resolveStopTarget()
+		if err != nil {
+			return statusMsg(err.Error())
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		switch target.Target {
+		case string(core.DestSimulator):
+			if target.UDID == "" {
+				return statusMsg("Missing simulator UDID")
+			}
+			if target.BundleID == "" {
+				return statusMsg("Missing bundle id")
+			}
+			if _, err := core.RunStreaming(ctx, core.CmdSpec{
+				Path: "xcrun",
+				Args: []string{"simctl", "terminate", target.UDID, target.BundleID},
+			}); err != nil {
+				return statusMsg("Stop failed: " + err.Error())
+			}
+		case string(core.DestDevice):
+			if target.UDID == "" {
+				return statusMsg("Missing device UDID")
+			}
+			if err := core.DevicectlStop(ctx, target.UDID, target.PID, target.BundleID, nil); err != nil {
+				return statusMsg("Stop failed: " + err.Error())
+			}
+		default:
+			return statusMsg("Stop not supported for target: " + target.Target)
+		}
+
+		removeID := target.SessionID
+		if removeID == "" {
+			removeID = target.BundleID
+		}
+		if removeID != "" {
+			_ = core.RemoveSession(m.projectRoot, removeID)
+		}
+		return statusMsg("App stopped")
+	}
+}
+
+func (m *Model) resolveStopTarget() (stopTarget, error) {
+	target := stopTarget{
+		BundleID: m.lastRun.BundleID,
+		PID:      m.lastRun.PID,
+		Target:   m.lastRun.Target,
+		UDID:     m.lastRun.UDID,
+	}
+
+	if target.BundleID == "" {
+		sess, err := latestSession(m.projectRoot)
+		if err != nil {
+			return stopTarget{}, fmt.Errorf("no running app found")
+		}
+		target.BundleID = sess.BundleID
+		target.PID = sess.PID
+		target.Target = sess.Target
+		target.UDID = sess.UDID
+		target.SessionID = sess.ID
+	}
+
+	if target.Target == "" {
+		switch m.cfg.Destination.Kind {
+		case core.DestSimulator:
+			target.Target = string(core.DestSimulator)
+		case core.DestDevice:
+			target.Target = string(core.DestDevice)
+		}
+	}
+
+	if target.UDID == "" {
+		switch m.cfg.Destination.Kind {
+		case core.DestSimulator, core.DestDevice:
+			target.UDID = m.cfg.Destination.UDID
+		}
+	}
+
+	if target.BundleID == "" {
+		return stopTarget{}, fmt.Errorf("missing bundle id for stop")
+	}
+	if target.Target == "" {
+		return stopTarget{}, fmt.Errorf("missing target for stop")
+	}
+	return target, nil
+}
+
+func latestSession(projectRoot string) (core.Session, error) {
+	sessions, err := core.LoadSessions(projectRoot)
+	if err != nil {
+		return core.Session{}, err
+	}
+	if len(sessions.Items) == 0 {
+		return core.Session{}, fmt.Errorf("no sessions")
+	}
+	best := sessions.Items[0]
+	bestTime := parseSessionTime(best.StartedAt)
+	for _, it := range sessions.Items[1:] {
+		t := parseSessionTime(it.StartedAt)
+		if t.After(bestTime) {
+			best = it
+			bestTime = t
+		}
+	}
+	return best, nil
+}
+
+func parseSessionTime(v string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // enterSearchMode enters search mode
@@ -1259,6 +1711,31 @@ func (m *Model) saveRecentCombo() {
 
 func (m *Model) handleEvent(ev core.Event) {
 	line := m.formatEventLine(ev)
+	now := time.Now()
+	m.lastEvent = now
+	if ev.Type == "log" || ev.Type == "log_raw" {
+		m.lastLog = now
+	}
+	if ev.Type == "status" {
+		m.lastStatus = ev.Msg
+		if strings.EqualFold(ev.Msg, "running") {
+			m.currentStage = "Running"
+			if m.runMode.Active && m.runningCmd == "run" {
+				m.runMode.FocusPane = PaneConsole
+			}
+		}
+		if m.runMode.Active && m.runningCmd == "run" {
+			m.runMode.Status = ev.Msg
+			m.runMode.StatusAt = now
+		}
+	}
+	if m.runMode.Active && m.runningCmd == "run" && isConsoleEvent(ev) {
+		consoleLine := m.formatConsoleEvent(ev)
+		if m.consoleLevelEnabled(consoleLine, ev) {
+			m.appendConsoleLog(consoleLine)
+		}
+		return
+	}
 
 	// Route to TabView (new tab-based system)
 	switch {
@@ -1298,9 +1775,12 @@ func (m *Model) handleEvent(ev core.Event) {
 	}
 
 	if appendPhase {
-		// In run mode, detect console output (after app launches).
-		if m.runMode.Active && m.runningCmd == "run" && ev.Type == "log" && m.currentStage == "Running" {
-			m.appendConsoleLog(phaseLine)
+		// In run mode, route app/unified logs to console pane.
+		if m.runMode.Active && m.runningCmd == "run" && isConsoleEvent(ev) {
+			line := m.formatConsoleEvent(ev)
+			if m.consoleLevelEnabled(line, ev) {
+				m.appendConsoleLog(line)
+			}
 		} else {
 			m.appendLog(phaseLine)
 		}
@@ -1411,6 +1891,71 @@ func isPrettyEvent(ev core.Event) bool {
 	return ok && pretty
 }
 
+func isConsoleEvent(ev core.Event) bool {
+	m, ok := ev.Data.(map[string]any)
+	if !ok {
+		return false
+	}
+	v, ok := m["stream"]
+	if !ok {
+		return false
+	}
+	stream, ok := v.(string)
+	if !ok {
+		return false
+	}
+	return stream == "app" || stream == "unified" || stream == "system"
+}
+
+func (m *Model) formatConsoleEvent(ev core.Event) string {
+	mm, ok := ev.Data.(map[string]any)
+	if !ok {
+		return ev.Msg
+	}
+	if s, ok := mm["stream"].(string); ok && s == "system" {
+		prefix := "[xcbolt] "
+		return consoleSystemPrefix + prefix + ev.Msg
+	}
+	return ev.Msg
+}
+
+func (m *Model) consoleLevelEnabled(line string, ev core.Event) bool {
+	mm, ok := ev.Data.(map[string]any)
+	if ok {
+		if s, ok := mm["stream"].(string); ok && s == "system" {
+			return true
+		}
+	}
+	levels := m.cfg.Launch.ConsoleLogLevels
+	if len(levels) == 0 {
+		return true
+	}
+	level := extractConsoleLevel(line)
+	if level == "" {
+		return true
+	}
+	if v, ok := levels[level]; ok {
+		return v
+	}
+	return true
+}
+
+func extractConsoleLevel(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	level := strings.TrimSpace(fields[1])
+	if level == "" {
+		return ""
+	}
+	r := []rune(level)
+	if len(r) == 0 {
+		return ""
+	}
+	return strings.ToUpper(string(r[0]))
+}
+
 func (m *Model) handleOpDone(msg opDoneMsg) {
 	m.running = false
 	m.runningCmd = ""
@@ -1421,12 +1966,25 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	m.stageProgress = ""
 	m.progressCur = 0
 	m.progressTotal = 0
+	m.tabView.SummaryTab.SetLogIdle(0)
 
 	// Hide progress bar
 	m.progressBar.Hide()
 	m.layout.ShowProgressBar = false
 
 	if msg.cfg.Version != 0 {
+		prev := m.cfg
+		changed := prev.Scheme != msg.cfg.Scheme ||
+			prev.Configuration != msg.cfg.Configuration ||
+			prev.Workspace != msg.cfg.Workspace ||
+			prev.Project != msg.cfg.Project ||
+			prev.Destination.Kind != msg.cfg.Destination.Kind ||
+			prev.Destination.UDID != msg.cfg.Destination.UDID
+		if changed && msg.cfg.Scheme != "" && msg.cfg.Configuration != "" {
+			if err := core.SaveConfig(m.projectRoot, m.configPath, msg.cfg); err != nil {
+				m.lastErr = err.Error()
+			}
+		}
 		m.cfg = msg.cfg
 	}
 
@@ -1449,6 +2007,9 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 		}
 		duration = msg.build.Duration
 		durationStr = duration.Round(100 * time.Millisecond).String()
+		if msg.build.BundleID != "" {
+			m.tabView.SummaryTab.SetAppInfo(msg.build.BundleID)
+		}
 	}
 	if msg.run != nil {
 		m.lastRun = *msg.run
@@ -1457,6 +2018,9 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 			Success:   success,
 			Message:   fmt.Sprintf("PID %d", msg.run.PID),
 			Timestamp: time.Now(),
+		}
+		if msg.run.BundleID != "" {
+			m.tabView.SummaryTab.SetAppInfo(msg.run.BundleID)
 		}
 	}
 	if msg.test != nil {
@@ -1488,6 +2052,12 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	resultLine := m.formatResultLine(msg.cmd, success, duration)
 	m.appendLog(resultLine)
 	m.appendStreamLine(resultLine)
+	if msg.err != nil {
+		errLine := "error: " + msg.err.Error()
+		m.appendLog(errLine)
+		m.appendStreamLine(errLine)
+		m.tabView.AddRawLine(errLine)
+	}
 
 	if msg.err != nil {
 		m.lastErr = msg.err.Error()
@@ -1500,6 +2070,14 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 func (m *Model) startOp(name string) tea.Cmd {
 	m.running = true
 	m.runningCmd = name
+	now := time.Now()
+	m.opStart = now
+	m.lastEvent = now
+	m.lastLog = time.Time{}
+	m.lastBeat = time.Time{}
+	m.lastStatus = ""
+	m.runMode.Status = ""
+	m.runMode.StatusAt = time.Time{}
 
 	// Update progress bar
 	m.progressBar.Visible = true
@@ -1514,6 +2092,7 @@ func (m *Model) startOp(name string) tea.Cmd {
 		m.runMode.ConsoleLogs = nil
 		m.runMode.FocusPane = PaneBuild
 		m.runMode.ConsolePos = 0
+		m.runMode.ConsoleFollow = true
 	} else {
 		m.runMode.Active = false
 	}
@@ -1534,7 +2113,7 @@ func (m *Model) startOp(name string) tea.Cmd {
 	// Save this scheme+destination combo to recents
 	m.saveRecentCombo()
 
-	events := make(chan core.Event, 256)
+	events := make(chan core.Event, 8192)
 	done := make(chan opDoneMsg, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelFn = cancel
@@ -1553,7 +2132,8 @@ func (m *Model) startOp(name string) tea.Cmd {
 			res, cfg2, err := core.Build(ctx, root, cfg, emitter)
 			done <- opDoneMsg{cmd: name, err: err, cfg: cfg2, build: &res}
 		case "run":
-			res, cfg2, err := core.Run(ctx, root, cfg, false, emitter)
+			// Use console mode in TUI so run stays attached to app output.
+			res, cfg2, err := core.Run(ctx, root, cfg, true, emitter)
 			done <- opDoneMsg{cmd: name, err: err, cfg: cfg2, run: &res}
 		case "test":
 			res, cfg2, err := core.Test(ctx, root, cfg, nil, nil, emitter)
@@ -1571,6 +2151,34 @@ func (m *Model) startOp(name string) tea.Cmd {
 				}
 			}
 			done <- opDoneMsg{cmd: name, err: cleanErr}
+		case "clean-derived":
+			p := filepath.Join(root, ".xcbolt", "DerivedData")
+			err := os.RemoveAll(p)
+			done <- opDoneMsg{cmd: name, err: err}
+		case "clean-results":
+			p := filepath.Join(root, ".xcbolt", "Results")
+			err := os.RemoveAll(p)
+			done <- opDoneMsg{cmd: name, err: err}
+		case "clean-sessions":
+			p := filepath.Join(root, ".xcbolt", "sessions.json")
+			err := os.RemoveAll(p)
+			done <- opDoneMsg{cmd: name, err: err}
+		case "clean-spm-cache":
+			var cleanErr error
+			if home, err := os.UserHomeDir(); err == nil {
+				paths := []string{
+					filepath.Join(home, "Library", "Caches", "org.swift.swiftpm"),
+					filepath.Join(home, "Library", "Developer", "Xcode", "SourcePackages"),
+				}
+				for _, p := range paths {
+					if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
+						cleanErr = err
+					}
+				}
+			} else {
+				cleanErr = err
+			}
+			done <- opDoneMsg{cmd: name, err: cleanErr}
 		default:
 			done <- opDoneMsg{cmd: name, err: fmt.Errorf("unknown op %s", name)}
 		}
@@ -1584,10 +2192,7 @@ type chanEmitter struct {
 }
 
 func (e *chanEmitter) Emit(ev core.Event) {
-	select {
-	case e.ch <- ev:
-	default:
-	}
+	e.ch <- ev
 }
 
 func waitForEvent(ch <-chan core.Event) tea.Cmd {
@@ -1619,11 +2224,140 @@ func (m *Model) appendStreamLine(line string) {
 }
 
 func (m *Model) appendConsoleLog(line string) {
-	m.runMode.ConsoleLogs = append(m.runMode.ConsoleLogs, line)
+	meta, msg := splitConsoleEntry(line)
+	if meta != "" {
+		m.runMode.ConsoleLogs = append(m.runMode.ConsoleLogs, consoleMetaPrefix+meta)
+	}
+	for _, wrapped := range m.wrapConsoleLines(msg) {
+		m.runMode.ConsoleLogs = append(m.runMode.ConsoleLogs, wrapped)
+	}
 	// Auto-scroll if at bottom
-	maxPos := len(m.runMode.ConsoleLogs) - m.layout.SplitBottomHeight()
-	if m.runMode.ConsolePos >= maxPos-1 {
+	maxPos := len(m.runMode.ConsoleLogs) - m.consolePaneHeight()
+	if m.runMode.ConsoleFollow || m.runMode.ConsolePos >= maxPos-1 {
 		m.runMode.ConsolePos = maxPos
+		m.runMode.ConsoleFollow = true
+	}
+}
+
+func (m *Model) wrapConsoleLines(line string) []string {
+	width := maxInt(0, m.layout.ContentWidth()-2)
+	if width <= 0 || line == "" {
+		return []string{line}
+	}
+	lines := []string{}
+	for _, part := range strings.Split(line, "\n") {
+		lines = append(lines, wrapLine(part, width, "  ")...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func wrapLine(line string, width int, continuationPrefix string) []string {
+	if width <= 0 {
+		return []string{line}
+	}
+	runes := []rune(line)
+	if len(runes) <= width {
+		return []string{line}
+	}
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return []string{line}
+	}
+	var out []string
+	var cur []rune
+	curLen := 0
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, string(cur))
+			cur = nil
+			curLen = 0
+		}
+	}
+	for _, w := range words {
+		wr := []rune(w)
+		wlen := len(wr)
+		if curLen == 0 {
+			if wlen > width {
+				for len(wr) > 0 {
+					chunk := wr
+					if len(chunk) > width {
+						chunk = wr[:width]
+					}
+					out = append(out, string(chunk))
+					wr = wr[len(chunk):]
+				}
+				continue
+			}
+			cur = append(cur, wr...)
+			curLen = wlen
+			continue
+		}
+		if curLen+1+wlen > width {
+			flush()
+			if wlen > width {
+				for len(wr) > 0 {
+					chunk := wr
+					if len(chunk) > width {
+						chunk = wr[:width]
+					}
+					out = append(out, string(chunk))
+					wr = wr[len(chunk):]
+				}
+				continue
+			}
+			cur = append(cur, wr...)
+			curLen = wlen
+			continue
+		}
+		cur = append(cur, ' ')
+		cur = append(cur, wr...)
+		curLen += 1 + wlen
+	}
+	flush()
+	if len(out) == 0 {
+		return []string{line}
+	}
+	if len(out) > 1 && continuationPrefix != "" {
+		for i := 1; i < len(out); i++ {
+			out[i] = continuationPrefix + out[i]
+		}
+	}
+	return out
+}
+
+func splitConsoleEntry(line string) (string, string) {
+	if line == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(line, "\n", 2)
+	if len(parts) == 1 {
+		return "", strings.TrimSpace(parts[0])
+	}
+	meta := strings.TrimSpace(parts[0])
+	msg := strings.TrimSpace(parts[1])
+	return meta, msg
+}
+
+func (m *Model) toggleConsoleLevel(level string, label string) {
+	if m.cfg.Launch.ConsoleLogLevels == nil {
+		m.cfg.Launch.ConsoleLogLevels = map[string]bool{}
+	}
+	cur, ok := m.cfg.Launch.ConsoleLogLevels[level]
+	if !ok {
+		cur = true
+	}
+	next := !cur
+	m.cfg.Launch.ConsoleLogLevels[level] = next
+	if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+		m.lastErr = err.Error()
+	}
+	if next {
+		m.setStatus(label + " logs enabled")
+	} else {
+		m.setStatus(label + " logs disabled")
 	}
 }
 
@@ -1632,7 +2366,7 @@ func (m *Model) scrollConsole(delta int) {
 	m.runMode.ConsolePos += delta
 
 	// Clamp to valid range
-	maxPos := len(m.runMode.ConsoleLogs) - m.layout.SplitBottomHeight()
+	maxPos := len(m.runMode.ConsoleLogs) - m.consolePaneHeight()
 	if maxPos < 0 {
 		maxPos = 0
 	}
@@ -1642,6 +2376,7 @@ func (m *Model) scrollConsole(delta int) {
 	if m.runMode.ConsolePos > maxPos {
 		m.runMode.ConsolePos = maxPos
 	}
+	m.runMode.ConsoleFollow = m.runMode.ConsolePos == maxPos
 }
 
 func (m *Model) formatEventLine(ev core.Event) string {
@@ -1737,18 +2472,17 @@ func (m Model) mainView() string {
 
 	// Build progress bar content (if running)
 	progressBarContent := ""
-	if m.running {
-		m.layout.ShowProgressBar = true
-		progressBarContent = m.progressBar.View(m.width, m.styles)
-	} else {
-		m.layout.ShowProgressBar = false
-	}
+	m.layout.ShowProgressBar = false
 
 	// Build hints bar
 	hintsBarContent := m.hintsBar.View(m.width, m.styles)
 
 	// Use split view for run mode
 	if m.runMode.Active {
+		topHeight, bottomHeight := m.splitHeights(statusBarContent, progressBarContent, hintsBarContent)
+		m.runMode.TopHeight = topHeight
+		m.runMode.BottomHeight = bottomHeight
+		m.tabView.SetSize(m.layout.ContentWidth(), topHeight)
 		topContent := m.contentView()
 		bottomContent := m.consoleView()
 		topFocused := m.runMode.FocusPane == PaneBuild
@@ -1766,6 +2500,10 @@ func (m Model) mainView() string {
 			m.styles,
 		)
 	}
+	m.runMode.TopHeight = 0
+	m.runMode.BottomHeight = 0
+	// Ensure tab view size resets in normal mode.
+	m.tabView.SetSize(m.layout.ContentWidth(), m.layout.ContentHeight())
 
 	// Build main content (logs)
 	contentArea := m.contentView()
@@ -1790,12 +2528,7 @@ func (m Model) searchView() string {
 
 	// Build progress bar content (if running)
 	progressBarContent := ""
-	if m.running {
-		m.layout.ShowProgressBar = true
-		progressBarContent = m.progressBar.View(m.width, m.styles)
-	} else {
-		m.layout.ShowProgressBar = false
-	}
+	m.layout.ShowProgressBar = false
 
 	// Build main content (logs)
 	contentArea := m.contentView()
@@ -1852,35 +2585,49 @@ func (m Model) contentView() string {
 func (m Model) consoleView() string {
 	s := m.styles
 
-	if len(m.runMode.ConsoleLogs) == 0 {
-		// Empty console state
-		emptyStyle := lipgloss.NewStyle().
-			Foreground(s.Colors.TextSubtle).
-			Padding(1, 2)
-		return emptyStyle.Render("Waiting for app output...")
+	// Calculate visible range
+	height := m.consolePaneHeight()
+	if height <= 0 {
+		return ""
 	}
 
-	// Calculate visible range
-	height := m.layout.SplitBottomHeight()
+	header := m.consoleHeader()
+	contentHeight := height
+	if header != "" {
+		contentHeight--
+	}
 	start := m.runMode.ConsolePos
 	if start < 0 {
 		start = 0
 	}
-	end := start + height
+	end := start + contentHeight
 	if end > len(m.runMode.ConsoleLogs) {
 		end = len(m.runMode.ConsoleLogs)
 	}
 
 	// Build visible lines
 	var lines []string
-	lineStyle := lipgloss.NewStyle().Foreground(s.Colors.Text)
+	if header != "" {
+		lines = append(lines, header)
+	}
+	textStyle := lipgloss.NewStyle().Foreground(s.Colors.Text)
+	metaStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
+	systemStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
 	for i := start; i < end; i++ {
 		line := m.runMode.ConsoleLogs[i]
+		style := textStyle
+		if strings.HasPrefix(line, consoleMetaPrefix) {
+			line = strings.TrimPrefix(line, consoleMetaPrefix)
+			style = metaStyle
+		} else if strings.HasPrefix(line, consoleSystemPrefix) {
+			line = strings.TrimPrefix(line, consoleSystemPrefix)
+			style = systemStyle
+		}
 		// Truncate long lines
 		if len(line) > m.layout.ContentWidth()-4 {
 			line = line[:m.layout.ContentWidth()-7] + "..."
 		}
-		lines = append(lines, lineStyle.Render(line))
+		lines = append(lines, style.Render(line))
 	}
 
 	// Pad to fill height
@@ -1889,6 +2636,27 @@ func (m Model) consoleView() string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) consoleHeader() string {
+	s := m.styles
+	labelStyle := lipgloss.NewStyle().Foreground(s.Colors.TextMuted)
+
+	status := ""
+	if m.running {
+		status = "Running"
+		if len(m.runMode.ConsoleLogs) == 0 {
+			status = "Running — waiting for app output…"
+		} else {
+			status = "Running — streaming logs"
+		}
+	} else if m.runMode.Active {
+		status = "Run complete"
+	}
+	if status == "" {
+		return ""
+	}
+	return labelStyle.Render(status)
 }
 
 // runModeHintsBar returns hints specific to run mode

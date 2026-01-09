@@ -141,8 +141,8 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("s", "scheme"),
 		),
 		Configuration: key.NewBinding(
-			key.WithKeys("C"),
-			key.WithHelp("C", "config"),
+			key.WithKeys("~"),
+			key.WithHelp("~", "build config"),
 		),
 		Destination: key.NewBinding(
 			key.WithKeys("d"),

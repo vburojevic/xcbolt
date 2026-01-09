@@ -45,7 +45,8 @@ func newTestCmd() *cobra.Command {
 				return nil
 			}
 
-			_, _, err = core.Test(ctx, ac.ProjectRoot, ac.Config, only, skip, ac.Emitter)
+			_, cfg2, err := core.Test(ctx, ac.ProjectRoot, ac.Config, only, skip, ac.Emitter)
+			persistConfigIfChanged(ac, cfg2)
 			return err
 		},
 	}

@@ -22,7 +22,11 @@ func newContextCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
-			info, cfg, err := core.DiscoverContext(ctx, ac.ProjectRoot, ac.Config, ac.Emitter)
+			info, cfg, err := core.DiscoverContext(ctx, ac.ProjectRoot, ac.Config, ac.Emitter, core.ContextOptions{
+				UseXcodebuildList:     ac.Flags.UseXcodebuildList,
+				AllowXcodebuildList:   true,
+				XcodebuildListTimeout: 5 * time.Second,
+			})
 			if err != nil {
 				return err
 			}

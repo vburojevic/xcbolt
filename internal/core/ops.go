@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ type BuildResult struct {
 	ResultBundle string        `json:"resultBundle"`
 	ExitCode     int           `json:"exitCode"`
 	Duration     time.Duration `json:"duration"`
+	AppPath      string        `json:"appPath,omitempty"`
+	BundleID     string        `json:"bundleId,omitempty"`
 }
 
 type RunResult struct {
@@ -48,6 +51,18 @@ func EnsureBuildDirs(cfg Config) error {
 }
 
 func Build(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (BuildResult, Config, error) {
+	if cfg2, err := ensureSchemeAndConfigFromFS(projectRoot, cfg, emit); err == nil {
+		cfg = cfg2
+	} else {
+		emitMaybe(emit, Err("build", ErrorObject{
+			Code:       "SCHEME_REQUIRED",
+			Message:    "No scheme configured",
+			Detail:     err.Error(),
+			Suggestion: "Run `xcbolt init` or pass --scheme.",
+		}))
+		return BuildResult{}, cfg, err
+	}
+
 	cfg, _ = ResolveDestinationIfNeeded(ctx, projectRoot, cfg, emit)
 
 	if err := EnsureBuildDirs(cfg); err != nil {
@@ -64,6 +79,13 @@ func Build(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (B
 	args = append(args, cfg.Xcodebuild.Options...)
 
 	emitMaybe(emit, Status("build", "Build started", map[string]any{"resultBundle": bundlePath}))
+	if cfg.Xcodebuild.DryRun {
+		cmdLine := formatCmd("xcodebuild", args)
+		emitMaybe(emit, Log("build", "Dry run: "+cmdLine))
+		emitMaybe(emit, Result("build", true, map[string]any{"exitCode": 0, "resultBundle": bundlePath, "dryRun": true}))
+		cfg.LastResultBundle = bundlePath
+		return BuildResult{ResultBundle: bundlePath, ExitCode: 0, Duration: 0}, cfg, nil
+	}
 	sink := newXcodebuildLogSink(ctx, "build", cfg, emit)
 	res, err := RunStreaming(ctx, CmdSpec{
 		Path:       "xcrun",
@@ -87,11 +109,43 @@ func Build(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (B
 		return BuildResult{ResultBundle: bundlePath, ExitCode: res.ExitCode, Duration: res.Duration}, cfg, err
 	}
 
-	emitMaybe(emit, Result("build", true, map[string]any{"exitCode": 0, "resultBundle": bundlePath, "durationMs": res.Duration.Milliseconds()}))
-	return BuildResult{ResultBundle: bundlePath, ExitCode: 0, Duration: res.Duration}, cfg, nil
+	var appPath string
+	var bundleID string
+	if settings, err := ShowBuildSettings(ctx, projectRoot, cfg); err == nil {
+		if settings["PRODUCT_BUNDLE_IDENTIFIER"] != "" {
+			bundleID = settings["PRODUCT_BUNDLE_IDENTIFIER"]
+		}
+		if p, err := guessAppBundlePath(settings); err == nil {
+			appPath = p
+		}
+	}
+	if appPath != "" {
+		cfg.LastBuiltAppBundle = appPath
+	}
+
+	emitMaybe(emit, Result("build", true, map[string]any{
+		"exitCode":     0,
+		"resultBundle": bundlePath,
+		"durationMs":   res.Duration.Milliseconds(),
+		"bundleId":     bundleID,
+		"appPath":      appPath,
+	}))
+	return BuildResult{ResultBundle: bundlePath, ExitCode: 0, Duration: res.Duration, AppPath: appPath, BundleID: bundleID}, cfg, nil
 }
 
 func Test(ctx context.Context, projectRoot string, cfg Config, onlyTesting []string, skipTesting []string, emit Emitter) (TestResult, Config, error) {
+	if cfg2, err := ensureSchemeAndConfigFromFS(projectRoot, cfg, emit); err == nil {
+		cfg = cfg2
+	} else {
+		emitMaybe(emit, Err("test", ErrorObject{
+			Code:       "SCHEME_REQUIRED",
+			Message:    "No scheme configured",
+			Detail:     err.Error(),
+			Suggestion: "Run `xcbolt init` or pass --scheme.",
+		}))
+		return TestResult{}, cfg, err
+	}
+
 	cfg, _ = ResolveDestinationIfNeeded(ctx, projectRoot, cfg, emit)
 
 	if err := EnsureBuildDirs(cfg); err != nil {
@@ -114,6 +168,13 @@ func Test(ctx context.Context, projectRoot string, cfg Config, onlyTesting []str
 	args = append(args, cfg.Xcodebuild.Options...)
 
 	emitMaybe(emit, Status("test", "Tests started", map[string]any{"resultBundle": bundlePath}))
+	if cfg.Xcodebuild.DryRun {
+		cmdLine := formatCmd("xcodebuild", args)
+		emitMaybe(emit, Log("test", "Dry run: "+cmdLine))
+		emitMaybe(emit, Result("test", true, map[string]any{"exitCode": 0, "resultBundle": bundlePath, "dryRun": true}))
+		cfg.LastResultBundle = bundlePath
+		return TestResult{ResultBundle: bundlePath, ExitCode: 0, Duration: 0}, cfg, nil
+	}
 	sink := newXcodebuildLogSink(ctx, "test", cfg, emit)
 	res, err := RunStreaming(ctx, CmdSpec{
 		Path:       "xcrun",
@@ -149,32 +210,121 @@ func Test(ctx context.Context, projectRoot string, cfg Config, onlyTesting []str
 }
 
 func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit Emitter) (RunResult, Config, error) {
-	cfg, _ = ResolveDestinationIfNeeded(ctx, projectRoot, cfg, emit)
+	if cfg2, err := ensureSchemeAndConfigFromFS(projectRoot, cfg, emit); err == nil {
+		cfg = cfg2
+	} else {
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "SCHEME_REQUIRED",
+			Message:    "No scheme configured",
+			Detail:     err.Error(),
+			Suggestion: "Run `xcbolt init` or pass --scheme.",
+		}))
+		return RunResult{}, cfg, err
+	}
+
+	if cfg2, err := ResolveDestinationIfNeeded(ctx, projectRoot, cfg, emit); err == nil {
+		cfg = cfg2
+	} else {
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "DESTINATION_REQUIRED",
+			Message:    "No destination available",
+			Detail:     err.Error(),
+			Suggestion: "Select a simulator/device or create one with `xcbolt simulator`.",
+		}))
+		return RunResult{}, cfg, err
+	}
+	if cfg.Destination.Kind == DestAuto {
+		err := errors.New("destination is still auto; unable to determine target")
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "DESTINATION_REQUIRED",
+			Message:    "No destination configured",
+			Detail:     err.Error(),
+			Suggestion: "Pick a destination in TUI (d) or pass --simulator/--device.",
+		}))
+		return RunResult{}, cfg, err
+	}
+	if cfg.Xcodebuild.DryRun {
+		args := baseXcodebuildArgs(projectRoot, cfg)
+		args = append(args,
+			"-derivedDataPath", cfg.DerivedDataPath,
+			"-resultBundlePath", filepath.Join(cfg.ResultBundlesPath, time.Now().Format("20060102-150405")+".xcresult"),
+			"build",
+		)
+		args = append(args, cfg.Xcodebuild.Options...)
+		cmdLine := formatCmd("xcodebuild", args)
+		emitMaybe(emit, Status("run", "Dry run enabled; skipping build/install/launch", nil))
+		emitMaybe(emit, Log("run", "Dry run: "+cmdLine))
+		return RunResult{Target: string(cfg.Destination.Kind), UDID: cfg.Destination.UDID}, cfg, nil
+	}
 
 	// Always build first (run implies build).
-	_, cfg, err := Build(ctx, projectRoot, cfg, emit)
+	buildRes, cfg, err := Build(ctx, projectRoot, cfg, emit)
 	if err != nil {
 		return RunResult{}, cfg, err
 	}
 
-	settings, err := ShowBuildSettings(ctx, projectRoot, cfg)
-	if err != nil {
-		return RunResult{}, cfg, err
+	appPath := buildRes.AppPath
+	if appPath != "" {
+		if _, statErr := os.Stat(appPath); statErr != nil {
+			appPath = ""
+		}
 	}
+	if appPath == "" {
+		settings, err := ShowBuildSettings(ctx, projectRoot, cfg)
+		if err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "BUILD_SETTINGS_FAILED",
+				Message:    "Failed to read build settings",
+				Detail:     err.Error(),
+				Suggestion: "Check scheme/configuration and destination.",
+			}))
+			return RunResult{}, cfg, err
+		}
 
-	appPath, err := guessAppBundlePath(settings)
-	if err != nil {
-		return RunResult{}, cfg, err
+		appPath, err = guessAppBundlePath(settings)
+		if err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "APP_BUNDLE_NOT_FOUND",
+				Message:    "Unable to locate built app bundle",
+				Detail:     err.Error(),
+				Suggestion: "Ensure the scheme builds an app target.",
+			}))
+			return RunResult{}, cfg, err
+		}
+	}
+	if _, statErr := os.Stat(appPath); statErr != nil {
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "APP_BUNDLE_MISSING",
+			Message:    "Built app bundle is missing",
+			Detail:     statErr.Error(),
+			Suggestion: "Clean and rebuild, or verify the scheme produces an .app.",
+		}))
+		return RunResult{}, cfg, statErr
 	}
 	cfg.LastBuiltAppBundle = appPath
 
 	appInfo, err := ReadAppBundleInfo(appPath)
 	if err != nil {
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "APP_BUNDLE_INFO_FAILED",
+			Message:    "Failed to read app Info.plist",
+			Detail:     err.Error(),
+			Suggestion: "Verify the built .app is valid.",
+		}))
 		return RunResult{}, cfg, err
 	}
 	if appInfo.BundleID == "" {
-		return RunResult{}, cfg, errors.New("could not determine bundle id from Info.plist")
+		err := errors.New("could not determine bundle id from Info.plist")
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "BUNDLE_ID_MISSING",
+			Message:    "Bundle ID missing",
+			Detail:     err.Error(),
+			Suggestion: "Ensure PRODUCT_BUNDLE_IDENTIFIER is set for the app target.",
+		}))
+		return RunResult{}, cfg, err
 	}
+
+	launchEnv := consoleLaunchEnv(cfg, console)
 
 	switch cfg.Destination.Kind {
 	case DestSimulator:
@@ -195,16 +345,32 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 			StdoutLine: func(s string) { emitMaybe(emit, Log("run", s)) },
 			StderrLine: func(s string) { emitMaybe(emit, Log("run", s)) },
 		}); err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "SIM_INSTALL_FAILED",
+				Message:    "Failed to install app on simulator",
+				Detail:     err.Error(),
+				Suggestion: "Try resetting the simulator or cleaning DerivedData.",
+			}))
 			return RunResult{}, cfg, err
+		}
+
+		var logCancel context.CancelFunc
+		if console && shouldStreamUnifiedLogs(cfg) {
+			predicate := simLogPredicate(cfg, appInfo)
+			if predicate != "" {
+				logCtx, cancel := context.WithCancel(ctx)
+				logCancel = cancel
+				go func() {
+					if err := SimctlLogStream(logCtx, udid, predicate, emit); err != nil && !errors.Is(err, context.Canceled) {
+						emitMaybe(emit, Warn("run", "simctl log stream failed: "+err.Error()))
+					}
+				}()
+			}
 		}
 
 		launchArgs := []string{"simctl", "launch"}
 		if console {
 			launchArgs = append(launchArgs, "--console")
-		}
-		// env support
-		for k, v := range cfg.Launch.Env {
-			launchArgs = append(launchArgs, "--env", fmt.Sprintf("%s=%s", k, v))
 		}
 		launchArgs = append(launchArgs, udid, appInfo.BundleID)
 		// Remaining arguments are passed to the app.
@@ -212,22 +378,42 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 
 		emitMaybe(emit, Status("run", "Launching app", map[string]any{"bundleId": appInfo.BundleID}))
 		var out strings.Builder
+		var errOut strings.Builder
 		res, err := RunStreaming(ctx, CmdSpec{
 			Path: "xcrun",
 			Args: launchArgs,
+			Env:  simctlChildEnv(launchEnv),
 			StdoutLine: func(s string) {
 				out.WriteString(s)
 				out.WriteString("\n")
-				emitMaybe(emit, Log("run", s))
+				if msg, ok := formatAppConsoleLine(appInfo, 0, false, s, !shouldStreamSystemLogs(cfg), shouldStreamUnifiedLogs(cfg)); ok {
+					emitMaybe(emit, LogStream("run", msg, "app"))
+				}
 			},
-			StderrLine: func(s string) { emitMaybe(emit, Log("run", s)) },
+			StderrLine: func(s string) {
+				errOut.WriteString(s)
+				errOut.WriteString("\n")
+				if msg, ok := formatAppConsoleLine(appInfo, 0, true, s, !shouldStreamSystemLogs(cfg), shouldStreamUnifiedLogs(cfg)); ok {
+					emitMaybe(emit, LogStream("run", msg, "app"))
+				}
+			},
 		})
+		if logCancel != nil {
+			logCancel()
+		}
 		_ = res
 		if err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "SIM_LAUNCH_FAILED",
+				Message:    "Failed to launch app on simulator",
+				Detail:     err.Error(),
+				Suggestion: "Check simulator state and app bundle id.",
+			}))
 			return RunResult{}, cfg, err
 		}
 		pid := parseFirstInt(out.String())
 		_, _ = AddSession(projectRoot, appInfo.BundleID, pid, "simulator", udid)
+		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: pid, Target: "simulator", UDID: udid}, cfg, nil
 
@@ -238,20 +424,186 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		}
 		emitMaybe(emit, Status("run", "Installing app on device", map[string]any{"udid": udid}))
 		if err := DevicectlInstallApp(ctx, udid, appPath, emit); err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "DEVICE_INSTALL_FAILED",
+				Message:    "Failed to install app on device",
+				Detail:     err.Error(),
+				Suggestion: "Ensure device is trusted/unlocked and provisioning is valid.",
+			}))
 			return RunResult{}, cfg, err
 		}
 		emitMaybe(emit, Status("run", "Launching app on device", map[string]any{"bundleId": appInfo.BundleID, "console": console}))
-		lr, err := DevicectlLaunchApp(ctx, udid, appInfo.BundleID, console, emit)
+		lr, err := DevicectlLaunchApp(ctx, udid, appInfo.BundleID, console, launchEnv, appInfo, !shouldStreamSystemLogs(cfg), emit)
 		if err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "DEVICE_LAUNCH_FAILED",
+				Message:    "Failed to launch app on device",
+				Detail:     err.Error(),
+				Suggestion: "Check device logs and app signing.",
+			}))
 			return RunResult{}, cfg, err
 		}
 		_, _ = AddSession(projectRoot, appInfo.BundleID, lr.PID, "device", udid)
+		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": lr.PID, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": lr.PID, "bundleId": appInfo.BundleID}))
 		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: lr.PID, Target: "device", UDID: udid}, cfg, nil
 
 	default:
 		return RunResult{}, cfg, fmt.Errorf("run not implemented for destination kind %q", cfg.Destination.Kind)
 	}
+}
+
+func consoleLaunchEnv(cfg Config, console bool) map[string]string {
+	env := map[string]string{}
+	for k, v := range cfg.Launch.Env {
+		env[k] = v
+	}
+	if !console {
+		return env
+	}
+	if _, disabled := env["IDE_DISABLED_OS_ACTIVITY_DT_MODE"]; !disabled {
+		if _, ok := env["OS_ACTIVITY_DT_MODE"]; !ok {
+			env["OS_ACTIVITY_DT_MODE"] = "enable"
+		}
+	}
+	if _, ok := env["NSUnbufferedIO"]; !ok {
+		env["NSUnbufferedIO"] = "YES"
+	}
+	return env
+}
+
+func shouldStreamUnifiedLogs(cfg Config) bool {
+	if cfg.Launch.StreamUnifiedLogs == nil {
+		return true
+	}
+	return *cfg.Launch.StreamUnifiedLogs
+}
+
+func shouldStreamSystemLogs(cfg Config) bool {
+	if cfg.Launch.StreamSystemLogs == nil {
+		return false
+	}
+	return *cfg.Launch.StreamSystemLogs
+}
+
+func simLogPredicate(cfg Config, info AppBundleInfo) string {
+	exec := info.Executable
+	bundle := info.BundleID
+	systemLogs := shouldStreamSystemLogs(cfg)
+
+	if exec != "" {
+		if systemLogs {
+			return fmt.Sprintf("process == \"%s\"", exec)
+		}
+		if bundle != "" {
+			return fmt.Sprintf("process == \"%s\" AND (subsystem == \"%s\" OR subsystem BEGINSWITH \"%s.\")", exec, bundle, bundle)
+		}
+		return fmt.Sprintf("process == \"%s\"", exec)
+	}
+
+	if bundle != "" {
+		return fmt.Sprintf("subsystem == \"%s\" OR subsystem BEGINSWITH \"%s.\"", bundle, bundle)
+	}
+	return ""
+}
+
+func simctlChildEnv(env map[string]string) map[string]string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range env {
+		out["SIMCTL_CHILD_"+k] = v
+	}
+	return out
+}
+
+var mirroredUnifiedLogRE = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\S+)\s+(\S+)\[([^\]]+)\]\s+\[([^\]]+)\]\s+(.*)$`)
+
+type mirroredUnifiedLine struct {
+	Time      string
+	Level     string
+	Process   string
+	PidThread string
+	Subsystem string
+	Message   string
+}
+
+func parseMirroredUnifiedLog(line string) (mirroredUnifiedLine, bool) {
+	m := mirroredUnifiedLogRE.FindStringSubmatch(strings.TrimSpace(line))
+	if len(m) != 8 {
+		return mirroredUnifiedLine{}, false
+	}
+	return mirroredUnifiedLine{
+		Time:      m[2],
+		Level:     m[3],
+		Process:   m[4],
+		PidThread: m[5],
+		Subsystem: m[6],
+		Message:   m[7],
+	}, true
+}
+
+func formatMirroredUnifiedLine(m mirroredUnifiedLine) string {
+	level := m.Level
+	if level == "" {
+		level = "I"
+	}
+	return fmt.Sprintf("%s %s %s[%s]\n%s", m.Time, level, m.Process, m.PidThread, m.Message)
+}
+
+func formatAppConsoleLine(info AppBundleInfo, pid int, stderr bool, line string, filterSystem bool, dedupeUnified bool) (string, bool) {
+	if line == "" {
+		return "", false
+	}
+	if mirrored, ok := parseMirroredUnifiedLog(line); ok {
+		if filterSystem && !subsystemMatchesApp(info, mirrored.Subsystem) {
+			return "", false
+		}
+		if dedupeUnified {
+			return "", false
+		}
+		return formatMirroredUnifiedLine(mirrored), true
+	}
+
+	level := "I"
+	if stderr {
+		level = "E"
+	}
+	proc := appDisplayName(info)
+	pidPart := "0"
+	if pid > 0 {
+		pidPart = fmt.Sprintf("%d", pid)
+	}
+	timePart := time.Now().Format("15:04:05.000")
+	return fmt.Sprintf("%s %s %s[%s:0]\n%s", timePart, level, proc, pidPart, strings.TrimSpace(line)), true
+}
+
+func subsystemMatchesApp(info AppBundleInfo, subsystem string) bool {
+	if subsystem == "" {
+		return false
+	}
+	bundle := info.BundleID
+	if bundle == "" {
+		return true
+	}
+	return subsystem == bundle || strings.HasPrefix(subsystem, bundle+".")
+}
+
+func appDisplayName(info AppBundleInfo) string {
+	if info.DisplayName != "" {
+		return info.DisplayName
+	}
+	if info.BundleName != "" {
+		return info.BundleName
+	}
+	if info.Executable != "" {
+		return info.Executable
+	}
+	if info.BundleID != "" {
+		return info.BundleID
+	}
+	return "App"
 }
 
 func baseXcodebuildArgs(projectRoot string, cfg Config) []string {
@@ -271,6 +623,20 @@ func baseXcodebuildArgs(projectRoot string, cfg Config) []string {
 		args = append(args, "-destination", dest)
 	}
 	return args
+}
+
+func formatCmd(path string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, path)
+	for _, a := range args {
+		if strings.ContainsAny(a, " \t\"") {
+			a = strings.ReplaceAll(a, "\"", "\\\"")
+			parts = append(parts, "\""+a+"\"")
+		} else {
+			parts = append(parts, a)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func emitMaybe(e Emitter, ev Event) {

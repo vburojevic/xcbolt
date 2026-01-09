@@ -83,27 +83,41 @@ type LaunchResult struct {
 	PID int
 }
 
-func DevicectlLaunchApp(ctx context.Context, deviceID string, bundleID string, console bool, emit Emitter) (LaunchResult, error) {
+func DevicectlLaunchApp(ctx context.Context, deviceID string, bundleID string, console bool, env map[string]string, info AppBundleInfo, filterSystem bool, emit Emitter) (LaunchResult, error) {
 	if deviceID == "" || bundleID == "" {
 		return LaunchResult{}, fmt.Errorf("deviceID and bundleID are required")
 	}
 
 	// Try a few command shapes for forward/backward compatibility.
-	candidates := [][]string{
+	base := [][]string{
 		// devicectl device launch app --device <id> <bundle>
 		{"devicectl", "device", "launch", "app", "--device", deviceID, bundleID},
 		// devicectl device process launch --device <id> --bundle-id <bundle>
 		{"devicectl", "device", "process", "launch", "--device", deviceID, "--bundle-id", bundleID},
 	}
+
+	candidates := cloneArgs(base)
 	if console {
 		for i := range candidates {
 			candidates[i] = append(candidates[i], "--console")
 		}
 	}
 
+	var tries [][]string
+	if len(env) > 0 {
+		if b, err := json.Marshal(env); err == nil {
+			withEnv := cloneArgs(candidates)
+			for i := range withEnv {
+				withEnv[i] = append(withEnv[i], "--environment-variables", string(b))
+			}
+			tries = append(tries, withEnv...)
+		}
+	}
+	tries = append(tries, candidates...)
+
 	var lastErr error
-	for _, args := range candidates {
-		pid, err := runDevicectlLaunchCandidate(ctx, args, emit)
+	for _, args := range tries {
+		pid, err := runDevicectlLaunchCandidate(ctx, args, console, info, filterSystem, emit)
 		if err == nil {
 			return LaunchResult{PID: pid}, nil
 		}
@@ -115,8 +129,11 @@ func DevicectlLaunchApp(ctx context.Context, deviceID string, bundleID string, c
 	return LaunchResult{}, lastErr
 }
 
-func runDevicectlLaunchCandidate(ctx context.Context, args []string, emit Emitter) (int, error) {
+func runDevicectlLaunchCandidate(ctx context.Context, args []string, console bool, info AppBundleInfo, filterSystem bool, emit Emitter) (int, error) {
 	var out strings.Builder
+	tmpDir := os.TempDir()
+	jsonPath := filepath.Join(tmpDir, fmt.Sprintf("xcbolt-launch-%d.json", os.Getpid()))
+	args = append(args, "--json-output", jsonPath)
 	_, err := RunStreaming(ctx, CmdSpec{
 		Path: "xcrun",
 		Args: args,
@@ -124,21 +141,100 @@ func runDevicectlLaunchCandidate(ctx context.Context, args []string, emit Emitte
 			out.WriteString(s)
 			out.WriteString("\n")
 			if emit != nil {
-				emit.Emit(Log("device", s))
+				if console {
+					if msg, ok := formatAppConsoleLine(info, 0, false, s, filterSystem, false); ok {
+						emit.Emit(LogStream("run", msg, "app"))
+					}
+				} else {
+					emit.Emit(Log("device", s))
+				}
 			}
 		},
 		StderrLine: func(s string) {
 			if emit != nil {
-				emit.Emit(Log("device", s))
+				if console {
+					if msg, ok := formatAppConsoleLine(info, 0, true, s, filterSystem, false); ok {
+						emit.Emit(LogStream("run", msg, "app"))
+					}
+				} else {
+					emit.Emit(Log("device", s))
+				}
 			}
 		},
 	})
 	if err != nil {
 		return 0, err
 	}
-	// Best-effort PID parsing (varies across versions).
-	pid := parseFirstInt(out.String())
+	pid := parseLaunchPID(jsonPath)
+	_ = os.Remove(jsonPath)
+	if pid == 0 {
+		// Best-effort PID parsing (varies across versions).
+		pid = parseFirstInt(out.String())
+	}
 	return pid, nil
+}
+
+func cloneArgs(in [][]string) [][]string {
+	out := make([][]string, len(in))
+	for i := range in {
+		out[i] = append([]string{}, in[i]...)
+	}
+	return out
+}
+
+func parseLaunchPID(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var anyJSON any
+	if err := json.Unmarshal(b, &anyJSON); err != nil {
+		return 0
+	}
+	return extractPID(anyJSON)
+}
+
+func extractPID(v any) int {
+	found := 0
+	var walk func(any)
+	walk = func(x any) {
+		if found != 0 {
+			return
+		}
+		switch t := x.(type) {
+		case map[string]any:
+			for _, k := range []string{"pid", "processIdentifier", "processId"} {
+				if vv, ok := t[k]; ok {
+					switch n := vv.(type) {
+					case float64:
+						if n > 0 {
+							found = int(n)
+							return
+						}
+					case int:
+						if n > 0 {
+							found = n
+							return
+						}
+					case string:
+						if p := parseFirstInt(n); p > 0 {
+							found = p
+							return
+						}
+					}
+				}
+			}
+			for _, vv := range t {
+				walk(vv)
+			}
+		case []any:
+			for _, vv := range t {
+				walk(vv)
+			}
+		}
+	}
+	walk(v)
+	return found
 }
 
 func parseFirstInt(s string) int {

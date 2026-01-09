@@ -21,6 +21,7 @@ type StatusBar struct {
 	Configuration string
 	Destination   string
 	DestOS        string
+	DryRun        bool
 
 	// Running state
 	Running    bool
@@ -158,6 +159,9 @@ func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) stri
 	} else {
 		status = icons.Idle
 	}
+	if s.DryRun {
+		status = status + " DRY"
+	}
 
 	sepStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
 
@@ -234,26 +238,28 @@ func (s StatusBar) renderCenterSection(styles Styles) string {
 	}
 	parts = append(parts, sep, destStyle.Render(destText))
 
+	if s.DryRun {
+		dryStyle := styles.StatusStyle("warning")
+		parts = append(parts, sep, dryStyle.Render("DRY RUN"))
+	}
+
 	return lipgloss.JoinHorizontal(lipgloss.Center, parts...)
 }
 
 // renderRightSection renders status indicator (spinner or result)
 func (s StatusBar) renderRightSection(styles Styles, icons Icons) string {
 	if s.Running {
-		// Running: spinner + phase name
-		spinnerView := styles.StatusStyle("running").Render(s.Spinner.View())
-
+		// Running: use a static play icon + phase name
+		icon := styles.StatusStyle("running").Render(icons.Run)
 		var labelParts []string
 		if s.Stage != "" {
 			labelParts = append(labelParts, s.Stage)
 		} else {
-			labelParts = append(labelParts, strings.ToUpper(s.RunningCmd))
+			labelParts = append(labelParts, "RUNNING")
 		}
-
 		labelStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent)
 		label := labelStyle.Render(strings.Join(labelParts, " "))
-
-		return spinnerView + " " + label
+		return icon + " " + label
 	}
 
 	// Not running: show result or idle
@@ -389,6 +395,7 @@ func DefaultHints() []HintItem {
 		{Key: "r", Desc: "run"},
 		{Key: "t", Desc: "test"},
 		{Key: "s", Desc: "scheme"},
+		{Key: "~", Desc: "build config"},
 		{Key: "d", Desc: "dest"},
 		{Key: "1-3", Desc: "tabs"},
 		{Key: "/", Desc: "search"},

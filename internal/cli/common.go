@@ -9,12 +9,13 @@ import (
 )
 
 type GlobalFlags struct {
-	JSON          bool
-	Config        string
-	Project       string
-	Verbose       bool
-	LogFormat     string
-	LogFormatArgs []string
+	JSON              bool
+	Config            string
+	Project           string
+	Verbose           bool
+	LogFormat         string
+	LogFormatArgs     []string
+	UseXcodebuildList bool
 }
 
 func resolveProjectRoot(projectFlag string) (string, error) {
@@ -70,6 +71,39 @@ func NewAppContext(flags GlobalFlags) (AppContext, error) {
 }
 
 func PrintFatal(err error) {
+	if ee, ok := err.(ExitError); ok {
+		fmt.Fprintln(os.Stderr, ee.Error())
+		os.Exit(ee.Code)
+	}
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e ExitError) Error() string {
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return "command failed"
+}
+
+func persistConfigIfChanged(ac AppContext, cfg core.Config) {
+	if cfg.Scheme == "" || cfg.Configuration == "" {
+		return
+	}
+	if cfg.Scheme == ac.Config.Scheme &&
+		cfg.Configuration == ac.Config.Configuration &&
+		cfg.Workspace == ac.Config.Workspace &&
+		cfg.Project == ac.Config.Project &&
+		cfg.Destination.Kind == ac.Config.Destination.Kind &&
+		cfg.Destination.UDID == ac.Config.Destination.UDID {
+		return
+	}
+	if err := core.SaveConfig(ac.ProjectRoot, ac.ConfigPath, cfg); err != nil {
+		ac.Emitter.Emit(core.Warn("config", "Failed to save config: "+err.Error()))
+	}
 }

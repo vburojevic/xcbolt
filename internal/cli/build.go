@@ -26,7 +26,8 @@ func newBuildCmd() *cobra.Command {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			_, _, err = core.Build(ctx, ac.ProjectRoot, ac.Config, ac.Emitter)
+			_, cfg2, err := core.Build(ctx, ac.ProjectRoot, ac.Config, ac.Emitter)
+			persistConfigIfChanged(ac, cfg2)
 			return err
 		},
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ func newCleanCmd() *cobra.Command {
 	var derived bool
 	var results bool
 	var sessions bool
+	var spmCache bool
 
 	cmd := &cobra.Command{
 		Use:   "clean",
@@ -23,9 +25,10 @@ func newCleanCmd() *cobra.Command {
 				return err
 			}
 
-			dd := derived || all || (!derived && !results && !sessions && !all)
-			rb := results || all || (!derived && !results && !sessions && !all)
-			sess := sessions || all || (!derived && !results && !sessions && !all)
+			dd := derived || all || (!derived && !results && !sessions && !spmCache && !all)
+			rb := results || all || (!derived && !results && !sessions && !spmCache && !all)
+			sess := sessions || all || (!derived && !results && !sessions && !spmCache && !all)
+			spm := spmCache || all
 
 			if dd {
 				path := filepath.Join(ac.ProjectRoot, ".xcbolt", "DerivedData")
@@ -42,6 +45,16 @@ func newCleanCmd() *cobra.Command {
 				_ = util.RemoveAllIfExists(path)
 				fmt.Fprintln(cmd.OutOrStdout(), "Removed", path)
 			}
+			if spm {
+				if home, err := os.UserHomeDir(); err == nil {
+					path := filepath.Join(home, "Library", "Caches", "org.swift.swiftpm")
+					_ = util.RemoveAllIfExists(path)
+					fmt.Fprintln(cmd.OutOrStdout(), "Removed", path)
+					path = filepath.Join(home, "Library", "Developer", "Xcode", "SourcePackages")
+					_ = util.RemoveAllIfExists(path)
+					fmt.Fprintln(cmd.OutOrStdout(), "Removed", path)
+				}
+			}
 			return nil
 		},
 	}
@@ -50,6 +63,7 @@ func newCleanCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&derived, "derived-data", false, "Remove .xcbolt/DerivedData")
 	cmd.Flags().BoolVar(&results, "results", false, "Remove .xcbolt/Results")
 	cmd.Flags().BoolVar(&sessions, "sessions", false, "Remove .xcbolt/sessions.json")
+	cmd.Flags().BoolVar(&spmCache, "spm-cache", false, "Remove SwiftPM caches (~/Library/Caches/org.swift.swiftpm, ~/Library/Developer/Xcode/SourcePackages)")
 
 	return cmd
 }

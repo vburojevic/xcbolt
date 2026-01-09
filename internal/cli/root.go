@@ -21,10 +21,11 @@ var (
 				return err
 			}
 			overrides := tui.ConfigOverrides{
-				LogFormat:        flags.LogFormat,
-				LogFormatArgs:    flags.LogFormatArgs,
-				HasLogFormat:     flags.LogFormat != "",
-				HasLogFormatArgs: len(flags.LogFormatArgs) > 0,
+				LogFormat:         flags.LogFormat,
+				LogFormatArgs:     flags.LogFormatArgs,
+				HasLogFormat:      flags.LogFormat != "",
+				HasLogFormatArgs:  len(flags.LogFormatArgs) > 0,
+				UseXcodebuildList: flags.UseXcodebuildList,
 			}
 			return tui.Run(ac.ProjectRoot, ac.ConfigPath, overrides)
 		},
@@ -41,11 +42,13 @@ func Execute() {
 	rootCmd.PersistentFlags().BoolVar(&flags.Verbose, "verbose", false, "Verbose output")
 	rootCmd.PersistentFlags().StringVar(&flags.LogFormat, "log-format", "", "Log formatter for xcodebuild output (auto|xcpretty|xcbeautify|raw)")
 	rootCmd.PersistentFlags().StringArrayVar(&flags.LogFormatArgs, "log-format-arg", nil, "Additional args for the log formatter (repeatable)")
+	rootCmd.PersistentFlags().BoolVar(&flags.UseXcodebuildList, "xcodebuild-list", false, "Use xcodebuild -list to discover schemes/configurations (may be slow)")
 
 	rootCmd.AddCommand(newTUICmd())
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newContextCmd())
 	rootCmd.AddCommand(newDoctorCmd())
+	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newBuildCmd())
 	rootCmd.AddCommand(newRunCmd())
 	rootCmd.AddCommand(newTestCmd())
@@ -71,10 +74,11 @@ func newTUICmd() *cobra.Command {
 				return err
 			}
 			overrides := tui.ConfigOverrides{
-				LogFormat:        flags.LogFormat,
-				LogFormatArgs:    flags.LogFormatArgs,
-				HasLogFormat:     flags.LogFormat != "",
-				HasLogFormatArgs: len(flags.LogFormatArgs) > 0,
+				LogFormat:         flags.LogFormat,
+				LogFormatArgs:     flags.LogFormatArgs,
+				HasLogFormat:      flags.LogFormat != "",
+				HasLogFormatArgs:  len(flags.LogFormatArgs) > 0,
+				UseXcodebuildList: flags.UseXcodebuildList,
 			}
 			return tui.Run(ac.ProjectRoot, ac.ConfigPath, overrides)
 		},

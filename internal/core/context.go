@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type ContextInfo struct {
@@ -17,7 +18,14 @@ type ContextInfo struct {
 	Devices        []Device    `json:"devices"`
 }
 
-func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (ContextInfo, Config, error) {
+type ContextOptions struct {
+	UseXcodebuildList     bool
+	AllowXcodebuildList   bool
+	XcodebuildListTimeout time.Duration
+}
+
+func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit Emitter, opts ContextOptions) (ContextInfo, Config, error) {
+	emitMaybe(emit, Status("context", "Scanning project root", map[string]any{"path": projectRoot}))
 	entries, err := os.ReadDir(projectRoot)
 	if err != nil {
 		return ContextInfo{}, cfg, err
@@ -42,13 +50,33 @@ func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit E
 		cfg.Project = projects[0]
 	}
 
-	// Schemes/configurations via xcodebuild -list -json
-	schemes := []string{}
-	configurations := []string{}
-	if cfg.Workspace != "" || cfg.Project != "" {
-		if list, err := XcodebuildList(ctx, projectRoot, cfg, emit); err == nil {
-			schemes = list.Schemes
-			configurations = list.Configurations
+	// Schemes/configurations via filesystem (fast, no xcodebuild).
+	emitMaybe(emit, Status("context", "Reading schemes/configurations from filesystem", nil))
+	schemes := listSchemesFromFS(projectRoot, cfg, projects)
+	configurations := listConfigurationsFromPBXProj(projectRoot, cfg, projects)
+
+	// Optionally use xcodebuild -list -json (slow) when requested or as fallback.
+	useXcodebuild := opts.UseXcodebuildList || (opts.AllowXcodebuildList && (len(schemes) == 0 || len(configurations) == 0))
+	if useXcodebuild && (cfg.Workspace != "" || cfg.Project != "") {
+		listCtx := ctx
+		cancel := func() {}
+		timeout := opts.XcodebuildListTimeout
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		if timeout > 0 {
+			listCtx, cancel = context.WithTimeout(ctx, timeout)
+		}
+		emitMaybe(emit, Status("context", "Running xcodebuild -list for schemes/configurations", map[string]any{"timeout": timeout.String()}))
+		list, err := XcodebuildList(listCtx, projectRoot, cfg, emit)
+		cancel()
+		if err == nil {
+			if len(schemes) == 0 {
+				schemes = list.Schemes
+			}
+			if len(configurations) == 0 {
+				configurations = list.Configurations
+			}
 			if cfg.Scheme == "" && len(list.Schemes) == 1 {
 				cfg.Scheme = list.Schemes[0]
 			}
@@ -56,20 +84,7 @@ func DiscoverContext(ctx context.Context, projectRoot string, cfg Config, emit E
 				cfg.Configuration = list.Configurations[0]
 			}
 		} else {
-			emitMaybe(emit, Warn("context", "Could not list schemes/configurations: "+err.Error()))
-		}
-	}
-
-	// If workspace was chosen but configs weren't found, try a single project as fallback.
-	if len(configurations) == 0 && cfg.Workspace != "" && cfg.Project == "" && len(projects) == 1 {
-		tmpCfg := cfg
-		tmpCfg.Workspace = ""
-		tmpCfg.Project = projects[0]
-		if list, err := XcodebuildList(ctx, projectRoot, tmpCfg, emit); err == nil {
-			configurations = list.Configurations
-			if cfg.Configuration == "" && len(list.Configurations) == 1 {
-				cfg.Configuration = list.Configurations[0]
-			}
+			emitMaybe(emit, Warn("context", "Could not list schemes/configurations via xcodebuild: "+err.Error()))
 		}
 	}
 

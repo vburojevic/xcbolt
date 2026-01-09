@@ -38,6 +38,7 @@ type SummaryTab struct {
 	SchemeName   string
 	TargetDevice string
 	BuildConfig  string
+	BundleID     string
 
 	// System Info (idle state)
 	XcodeVersion    string
@@ -45,8 +46,9 @@ type SummaryTab struct {
 	DeviceConnected bool
 
 	// Build Progress
-	CurrentFile  string    // Filename only
-	CurrentStage string    // Current build stage (Compile, Link, Sign, etc.)
+	CurrentFile  string // Filename only
+	CurrentStage string // Current build stage (Compile, Link, Sign, etc.)
+	LogIdle      time.Duration
 	FileProgress int       // Current file number
 	FilesTotal   int       // Total files to process
 	StartTime    time.Time // For elapsed timer
@@ -134,6 +136,10 @@ func (st *SummaryTab) SetProjectInfo(name, scheme, target, config string) {
 	st.BuildConfig = config
 }
 
+func (st *SummaryTab) SetAppInfo(bundleID string) {
+	st.BundleID = bundleID
+}
+
 // SetSystemInfo sets system information for the idle state
 func (st *SummaryTab) SetSystemInfo(xcode, simulator string, deviceConnected bool) {
 	st.XcodeVersion = xcode
@@ -167,6 +173,11 @@ func (st *SummaryTab) UpdateProgress(file string, current, total int, stage stri
 	if stage != "" {
 		st.CurrentStage = stage
 	}
+}
+
+// SetLogIdle updates the idle duration since the last log line.
+func (st *SummaryTab) SetLogIdle(d time.Duration) {
+	st.LogIdle = d
 }
 
 // IncrementErrors increments the error count
@@ -347,21 +358,17 @@ func (st *SummaryTab) idleView(styles Styles) string {
 	} else {
 		projectContent = append(projectContent, "No project configured")
 	}
-	if st.SchemeName != "" || st.BuildConfig != "" {
-		line := ""
-		if st.SchemeName != "" {
-			line += "Scheme: " + st.SchemeName
-		}
-		if st.BuildConfig != "" {
-			if line != "" {
-				line += "   "
-			}
-			line += "Config: " + st.BuildConfig
-		}
-		projectContent = append(projectContent, line)
+	if st.SchemeName != "" {
+		projectContent = append(projectContent, "Scheme: "+st.SchemeName)
+	}
+	if st.BuildConfig != "" {
+		projectContent = append(projectContent, "Config: "+st.BuildConfig)
 	}
 	if st.TargetDevice != "" {
 		projectContent = append(projectContent, "Target: "+st.TargetDevice)
+	}
+	if st.BundleID != "" {
+		projectContent = append(projectContent, "Bundle: "+st.BundleID)
 	}
 	if len(projectContent) == 0 {
 		projectContent = append(projectContent, "No project info available")
@@ -559,6 +566,10 @@ func (st *SummaryTab) buildingView(styles Styles) string {
 		}
 	}
 	buildContent = append(buildContent, activityLine)
+	if st.LogIdle > 8*time.Second {
+		idleStyle := lipgloss.NewStyle().Foreground(styles.Colors.TextMuted)
+		buildContent = append(buildContent, idleStyle.Render(fmt.Sprintf("No new logs for %s", formatShortDuration(st.LogIdle))))
+	}
 
 	cards = append(cards, st.renderCard(cardTitle, buildContent, cardWidth, styles))
 

@@ -13,6 +13,8 @@ import (
 )
 
 func newInitCmd() *cobra.Command {
+	var nonInteractive bool
+
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize project configuration (.xcbolt/config.json)",
@@ -24,14 +26,30 @@ func newInitCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
-			info, cfg, err := core.DiscoverContext(ctx, ac.ProjectRoot, ac.Config, ac.Emitter)
+			ac.Emitter.Emit(core.Status("init", "Loading project context…", nil))
+			info, cfg, err := core.DiscoverContext(ctx, ac.ProjectRoot, ac.Config, ac.Emitter, core.ContextOptions{
+				UseXcodebuildList:     ac.Flags.UseXcodebuildList,
+				AllowXcodebuildList:   true,
+				XcodebuildListTimeout: 5 * time.Second,
+			})
 			if err != nil {
 				return err
 			}
 
-			if ac.Flags.JSON {
+			if nonInteractive || ac.Flags.JSON {
 				// Non-interactive best-effort defaults.
 				cfg = pickInitDefaults(info, cfg)
+				if nonInteractive {
+					if cfg.Workspace == "" && cfg.Project == "" {
+						return ExitError{Code: 2, Err: fmt.Errorf("no workspace/project detected")}
+					}
+					if cfg.Scheme == "" {
+						return ExitError{Code: 3, Err: fmt.Errorf("no scheme detected")}
+					}
+					if cfg.Configuration == "" {
+						return ExitError{Code: 4, Err: fmt.Errorf("no build configuration detected")}
+					}
+				}
 				if err := core.SaveConfig(ac.ProjectRoot, ac.ConfigPath, cfg); err != nil {
 					return err
 				}
@@ -52,6 +70,7 @@ func newInitCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "Use defaults without prompts (CI-friendly)")
 	return cmd
 }
 
@@ -65,6 +84,9 @@ func pickInitDefaults(info core.ContextInfo, cfg core.Config) core.Config {
 	}
 	if cfg.Scheme == "" && len(info.Schemes) > 0 {
 		cfg.Scheme = info.Schemes[0]
+	}
+	if cfg.Configuration == "" && len(info.Configurations) > 0 {
+		cfg.Configuration = info.Configurations[0]
 	}
 	if cfg.Configuration == "" {
 		cfg.Configuration = "Debug"
@@ -104,11 +126,7 @@ func runInitWizard(info core.ContextInfo, cfg core.Config) (core.Config, error) 
 		schemeOpts = append(schemeOpts, huh.NewOption("(No schemes detected)", ""))
 	}
 
-	confOpts := []huh.Option[string]{
-		huh.NewOption("Debug", "Debug"),
-		huh.NewOption("Release", "Release"),
-		huh.NewOption("Other…", "__other__"),
-	}
+	confOpts := initConfigOptions(info.Configurations, conf)
 
 	kindOpts := []huh.Option[string]{
 		huh.NewOption("Simulator", string(core.DestSimulator)),
@@ -235,4 +253,37 @@ func runInitWizard(info core.ContextInfo, cfg core.Config) (core.Config, error) 
 	}
 
 	return cfg, nil
+}
+
+func initConfigOptions(configs []string, current string) []huh.Option[string] {
+	seen := map[string]struct{}{}
+	list := []string{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		list = append(list, v)
+	}
+
+	if len(configs) == 0 {
+		add("Debug")
+		add("Release")
+	} else {
+		for _, c := range configs {
+			add(c)
+		}
+	}
+	add(current)
+
+	opts := make([]huh.Option[string], 0, len(list)+1)
+	for _, c := range list {
+		opts = append(opts, huh.NewOption(c, c))
+	}
+	opts = append(opts, huh.NewOption("Other…", "__other__"))
+	return opts
 }

@@ -90,6 +90,14 @@ func Log(cmd, msg string) Event {
 	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg}
 }
 
+func LogStream(cmd, msg, stream string) Event {
+	data := map[string]any{}
+	if stream != "" {
+		data["stream"] = stream
+	}
+	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: data}
+}
+
 func LogPretty(cmd, msg string) Event {
 	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: map[string]any{"pretty": true}}
 }

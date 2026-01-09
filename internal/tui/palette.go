@@ -93,6 +93,10 @@ func DefaultCommands() []Command {
 		{ID: "run", Name: "Run", Description: "Build and run the app", Shortcut: "r", Category: "Actions"},
 		{ID: "test", Name: "Test", Description: "Run tests", Shortcut: "t", Category: "Actions"},
 		{ID: "clean", Name: "Clean", Description: "Clean build artifacts", Shortcut: "c", Category: "Actions"},
+		{ID: "clean-derived", Name: "Clean DerivedData", Description: "Remove .xcbolt/DerivedData", Category: "Actions"},
+		{ID: "clean-results", Name: "Clean Results", Description: "Remove .xcbolt/Results", Category: "Actions"},
+		{ID: "clean-sessions", Name: "Clean Sessions", Description: "Remove .xcbolt/sessions.json", Category: "Actions"},
+		{ID: "clean-spm-cache", Name: "Clean SwiftPM Cache", Description: "Remove SwiftPM caches", Category: "Actions"},
 		{ID: "stop", Name: "Stop App", Description: "Stop running application", Shortcut: "x", Category: "Actions"},
 
 		// Archive/Profile
@@ -104,8 +108,16 @@ func DefaultCommands() []Command {
 
 		// Configuration
 		{ID: "scheme", Name: "Switch Scheme", Description: "Change the active scheme", Shortcut: "s", Category: "Config"},
-		{ID: "configuration", Name: "Switch Configuration", Description: "Change the active build configuration", Shortcut: "C", Category: "Config"},
+		{ID: "configuration", Name: "Switch Configuration", Description: "Change the active build configuration", Shortcut: "~", Category: "Config"},
 		{ID: "destination", Name: "Switch Destination", Description: "Change the target device/simulator", Shortcut: "d", Category: "Config"},
+		{ID: "toggle-dry-run", Name: "Toggle Dry Run", Description: "Print xcodebuild commands without running them", Category: "Config"},
+		{ID: "toggle-unified-logs", Name: "Toggle Unified Logs", Description: "Stream unified logs during Run", Category: "Config"},
+		{ID: "toggle-system-logs", Name: "Toggle System Logs", Description: "Include Apple/system subsystems in unified logs", Category: "Config"},
+		{ID: "toggle-log-debug", Name: "Toggle Debug Logs", Description: "Show/hide debug logs in console", Category: "Config"},
+		{ID: "toggle-log-info", Name: "Toggle Info Logs", Description: "Show/hide info logs in console", Category: "Config"},
+		{ID: "toggle-log-warn", Name: "Toggle Warning Logs", Description: "Show/hide warning logs in console", Category: "Config"},
+		{ID: "toggle-log-error", Name: "Toggle Error Logs", Description: "Show/hide error logs in console", Category: "Config"},
+		{ID: "toggle-log-fault", Name: "Toggle Fault Logs", Description: "Show/hide fault logs in console", Category: "Config"},
 		{ID: "init", Name: "Initialize Config", Description: "Run the configuration wizard", Shortcut: "i", Category: "Config"},
 		{ID: "refresh", Name: "Refresh Context", Description: "Rescan projects, schemes, and devices", Shortcut: "^R", Category: "Config"},
 
@@ -114,6 +126,8 @@ func DefaultCommands() []Command {
 		{ID: "logs", Name: "Stream Logs", Description: "Stream device/simulator logs", Category: "Utilities"},
 		{ID: "simulator-boot", Name: "Boot Simulator", Description: "Boot the selected simulator", Category: "Utilities"},
 		{ID: "simulator-shutdown", Name: "Shutdown Simulator", Description: "Shutdown all simulators", Category: "Utilities"},
+		{ID: "open-xcode", Name: "Open in Xcode", Description: "Open workspace/project in Xcode", Category: "Utilities"},
+		{ID: "open-project", Name: "Open Project", Description: "Reveal workspace/project in Finder", Category: "Utilities"},
 
 		// Navigation
 		{ID: "help", Name: "Show Help", Description: "Display keyboard shortcuts", Shortcut: "?", Category: "Navigation"},
