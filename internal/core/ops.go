@@ -566,10 +566,7 @@ func formatAppConsoleLine(info AppBundleInfo, pid int, stderr bool, line string,
 		return formatMirroredUnifiedLine(mirrored), true
 	}
 
-	level := "I"
-	if stderr {
-		level = "E"
-	}
+	level := appConsoleLevel(stderr, line)
 	proc := appDisplayName(info)
 	pidPart := "0"
 	if pid > 0 {
@@ -577,6 +574,35 @@ func formatAppConsoleLine(info AppBundleInfo, pid int, stderr bool, line string,
 	}
 	timePart := time.Now().Format("15:04:05.000")
 	return fmt.Sprintf("%s %s %s[%s:0]\n%s", timePart, level, proc, pidPart, strings.TrimSpace(line)), true
+}
+
+func appConsoleLevel(stderr bool, line string) string {
+	if !stderr {
+		return "I"
+	}
+	if isFatalAppLogLine(line) {
+		return "F"
+	}
+	// Most stderr lines are non-fatal; classify as warning to avoid false "errors".
+	return "W"
+}
+
+func isFatalAppLogLine(line string) bool {
+	lower := strings.ToLower(line)
+	switch {
+	case strings.Contains(lower, "fatal error"),
+		strings.Contains(lower, "terminating app due to uncaught exception"),
+		strings.Contains(lower, "uncaught exception"),
+		strings.Contains(lower, "precondition failed"),
+		strings.Contains(lower, "assertion failed"),
+		strings.Contains(lower, "libc++abi: terminating"),
+		strings.Contains(lower, "sigabrt"),
+		strings.Contains(lower, "sigsegv"),
+		strings.Contains(lower, "abort() called"),
+		strings.Contains(lower, "dyld: library not loaded"):
+		return true
+	}
+	return false
 }
 
 func subsystemMatchesApp(info AppBundleInfo, subsystem string) bool {

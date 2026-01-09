@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -615,21 +616,9 @@ func (m *Model) updateIdleHints(now time.Time) {
 }
 
 func (m *Model) maybeHeartbeat(now time.Time, idle time.Duration) {
-	const idleThreshold = 8 * time.Second
-	const heartbeatInterval = 15 * time.Second
-
-	if idle < idleThreshold {
-		return
-	}
-	if !m.lastBeat.IsZero() && now.Sub(m.lastBeat) < heartbeatInterval {
-		return
-	}
-	m.lastBeat = now
-
-	line := fmt.Sprintf("…still running (idle %s)", formatShortDuration(idle))
-	m.appendLog(line)
-	m.appendStreamLine(line)
-	m.tabView.AddRawLine(line)
+	// Disabled: no heartbeat messages
+	_ = now
+	_ = idle
 }
 
 func (m Model) activityLine() string {
@@ -2060,8 +2049,12 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 
 	if msg.err != nil {
-		m.lastErr = msg.err.Error()
-		m.setStatus(strings.ToUpper(msg.cmd) + " failed")
+		if errors.Is(msg.err, context.Canceled) && strings.EqualFold(msg.cmd, "run") {
+			m.setStatus("Run canceled")
+		} else {
+			m.lastErr = msg.err.Error()
+			m.setStatus(strings.ToUpper(msg.cmd) + " failed")
+		}
 	} else {
 		m.setStatus(strings.ToUpper(msg.cmd) + " done")
 	}
