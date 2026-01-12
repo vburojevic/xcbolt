@@ -1,11 +1,13 @@
 package core
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const ConfigVersion = 1
@@ -96,7 +98,54 @@ func ConfigPath(projectRoot string) string {
 }
 
 func EnsureProjectDirs(projectRoot string) error {
-	return os.MkdirAll(filepath.Join(projectRoot, ".xcbolt"), 0o755)
+	dir := filepath.Join(projectRoot, ".xcbolt")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return ensureXcboltGitignore(dir)
+}
+
+func ensureXcboltGitignore(xcboltDir string) error {
+	path := filepath.Join(xcboltDir, ".gitignore")
+	entries := []string{
+		"DerivedData/",
+		"Results/",
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			content := strings.Join(entries, "\n") + "\n"
+			return os.WriteFile(path, []byte(content), 0o644)
+		}
+		return err
+	}
+
+	existing := string(b)
+	missing := []string{}
+	for _, entry := range entries {
+		if !hasGitignoreLine(existing, entry) {
+			missing = append(missing, entry)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		existing += "\n"
+	}
+	existing += strings.Join(missing, "\n") + "\n"
+	return os.WriteFile(path, []byte(existing), 0o644)
+}
+
+func hasGitignoreLine(content string, line string) bool {
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) == line {
+			return true
+		}
+	}
+	return false
 }
 
 func LoadConfig(projectRoot string, overridePath string) (Config, error) {

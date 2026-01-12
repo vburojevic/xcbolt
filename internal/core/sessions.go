@@ -48,7 +48,7 @@ func LoadSessions(projectRoot string) (Sessions, error) {
 }
 
 func SaveSessions(projectRoot string, s Sessions) error {
-	if err := os.MkdirAll(filepath.Join(projectRoot, ".xcbolt"), 0o755); err != nil {
+	if err := EnsureProjectDirs(projectRoot); err != nil {
 		return err
 	}
 	path := sessionsPath(projectRoot)
