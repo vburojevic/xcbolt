@@ -150,7 +150,7 @@ func (s StatusBar) renderMinimalView(width int, styles Styles, icons Icons) stri
 	// Status indicator
 	var status string
 	if s.Running {
-		status = s.Spinner.View() + " " + s.Stage
+		status = s.Spinner.View()
 	} else if s.HasLastResult {
 		switch s.LastResultStatus {
 		case "canceled":
@@ -259,17 +259,9 @@ func (s StatusBar) renderCenterSection(styles Styles) string {
 // renderRightSection renders status indicator (spinner or result)
 func (s StatusBar) renderRightSection(styles Styles, icons Icons) string {
 	if s.Running {
-		// Running: use a static play icon + phase name
+		// Running: show icon only
 		icon := styles.StatusStyle("running").Render(icons.Run)
-		var labelParts []string
-		if s.Stage != "" {
-			labelParts = append(labelParts, s.Stage)
-		} else {
-			labelParts = append(labelParts, "RUNNING")
-		}
-		labelStyle := lipgloss.NewStyle().Foreground(styles.Colors.Accent)
-		label := labelStyle.Render(strings.Join(labelParts, " "))
-		return icon + " " + label
+		return icon
 	}
 
 	// Not running: show result or idle

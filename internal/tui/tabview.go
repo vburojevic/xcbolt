@@ -341,11 +341,13 @@ func (tv *TabView) renderTabBar(styles Styles) string {
 	lineContainer := lipgloss.NewStyle().
 		Width(tv.Width).
 		MaxWidth(tv.Width).
+		MaxHeight(1).
 		Render(line)
 
 	underlineContainer := lipgloss.NewStyle().
 		Width(tv.Width).
 		MaxWidth(tv.Width).
+		MaxHeight(1).
 		Render(underline)
 
 	return lipgloss.JoinVertical(lipgloss.Left, lineContainer, underlineContainer)

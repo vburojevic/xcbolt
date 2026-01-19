@@ -132,7 +132,7 @@ func defaultKeyMap() keyMap {
 		),
 		Stop: key.NewBinding(
 			key.WithKeys("x"),
-			key.WithHelp("x", "stop app"),
+			key.WithHelp("x", "stop"),
 		),
 
 		// Selectors

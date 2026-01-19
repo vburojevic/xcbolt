@@ -709,10 +709,7 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		}
 	case "stop":
 		if m.running {
-			if m.cancelFn != nil {
-				m.cancelFn()
-				m.setStatus("Canceling…")
-			}
+			m.cancelRunningOp()
 			return nil
 		}
 		return m.stopApp()
@@ -1055,9 +1052,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		m.setupHelpViewport()
 
 	case keyMatches(msg, m.keys.Cancel):
-		if m.running && m.cancelFn != nil {
-			m.cancelFn()
-			m.setStatus("Canceling…")
+		if m.running {
+			m.cancelRunningOp()
 		} else if m.runMode.Active && !m.running {
 			return m.stopApp()
 		}
@@ -1084,13 +1080,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.Stop):
 		if m.running {
-			if m.cancelFn != nil {
-				m.cancelFn()
-				m.setStatus("Canceling…")
-			}
-			break
+			m.cancelRunningOp()
 		}
-		return m.stopApp()
+		return nil
 
 	case keyMatches(msg, m.keys.Scheme):
 		m.openSchemeSelector()
@@ -1409,6 +1401,20 @@ type stopTarget struct {
 	SessionID string
 }
 
+func (m *Model) cancelRunningOp() {
+	if m.cancelFn != nil {
+		m.cancelFn()
+	}
+	m.setStatus("Canceling…")
+	if m.runMode.Active {
+		// Exit split view immediately so the bottom bar returns to normal hints.
+		m.runMode.Active = false
+		m.runMode.FocusPane = PaneBuild
+		m.runMode.Status = ""
+		m.runMode.StatusAt = time.Time{}
+	}
+}
+
 func (m *Model) stopApp() tea.Cmd {
 	return func() tea.Msg {
 		target, err := m.resolveStopTarget()
@@ -1709,6 +1715,10 @@ func (m *Model) handleEvent(ev core.Event) {
 		m.lastStatus = ev.Msg
 		if strings.EqualFold(ev.Msg, "running") {
 			m.currentStage = "Running"
+			m.stageProgress = ""
+			m.progressCur = 0
+			m.progressTotal = 0
+			m.tabView.SummaryTab.UpdateProgress("", 0, 0, "Running")
 			if m.runMode.Active && m.runningCmd == "run" {
 				m.runMode.FocusPane = PaneConsole
 			}
@@ -1796,9 +1806,6 @@ func (m *Model) handleEvent(ev core.Event) {
 }
 
 func (m *Model) parseProgressFromEvent(ev core.Event) {
-	if ev.Type == "log" && isPrettyEvent(ev) {
-		return
-	}
 	msg := ev.Msg
 
 	// Reset progress on new operation
@@ -1817,6 +1824,10 @@ func (m *Model) parseProgressFromEvent(ev core.Event) {
 		m.progressCur = 0
 		m.progressTotal = 0
 		m.tabView.SummaryTab.UpdateProgress("", 0, 0, "")
+		return
+	}
+
+	if ev.Type == "log" && isPrettyEvent(ev) {
 		return
 	}
 
@@ -2510,7 +2521,11 @@ func (m Model) mainView() string {
 	m.layout.ShowProgressBar = false
 
 	// Build hints bar
-	hintsBarContent := m.hintsBar.View(m.width, m.styles)
+	hints := DefaultHints()
+	if m.running {
+		hints = append(hints, HintItem{Key: "x", Desc: "stop"})
+	}
+	hintsBarContent := m.hintsBar.renderHints(hints, m.styles)
 
 	// Use split view for run mode
 	if m.runMode.Active {
@@ -2730,11 +2745,27 @@ func (m Model) runModeHintsBar() string {
 		Desc string
 	}{
 		{"tab", "switch pane"},
-		{"x", "stop app"},
-		{"↑↓", "scroll"},
-		{"esc", "cancel"},
-		{"?", "help"},
 	}
+	if m.running {
+		hints = append(hints, struct {
+			Key  string
+			Desc string
+		}{"x", "stop"})
+	}
+	hints = append(hints,
+		struct {
+			Key  string
+			Desc string
+		}{"↑↓", "scroll"},
+		struct {
+			Key  string
+			Desc string
+		}{"esc", "cancel"},
+		struct {
+			Key  string
+			Desc string
+		}{"?", "help"},
+	)
 
 	var parts []string
 	for i, hint := range hints {
