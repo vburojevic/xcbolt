@@ -155,6 +155,9 @@ func (l Layout) RenderHintsBar(content string, styles Styles) string {
 
 	contentLine := lipgloss.NewStyle().
 		Foreground(styles.Colors.TextSubtle).
+		Width(l.Width).
+		MaxWidth(l.Width).
+		MaxHeight(1).
 		Render(" " + content)
 
 	return separator + "\n" + contentLine
