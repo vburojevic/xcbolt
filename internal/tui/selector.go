@@ -511,7 +511,21 @@ func ConfigurationItems(configs []string, current string) []SelectorItem {
 
 // DestinationItems creates selector items from simulators and devices
 func DestinationItems(sims []SimulatorInfo, devices []DeviceInfo) []SelectorItem {
-	items := make([]SelectorItem, 0, len(sims)+len(devices))
+	items := make([]SelectorItem, 0, 1+len(sims)+len(devices))
+
+	// Local Mac destination
+	items = append(items, SelectorItem{
+		ID:          "macos",
+		Title:       "My Mac",
+		Description: "macOS",
+		Meta:        "[local]",
+	})
+	items = append(items, SelectorItem{
+		ID:          "catalyst",
+		Title:       "My Mac (Catalyst)",
+		Description: "macOS",
+		Meta:        "[catalyst]",
+	})
 
 	// Add simulators
 	for _, sim := range sims {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -482,8 +483,16 @@ func (m *Model) openDestinationSelector() {
 		return
 	}
 
+	selectedID := m.cfg.Destination.UDID
+	switch m.cfg.Destination.Kind {
+	case core.DestMacOS:
+		selectedID = "macos"
+	case core.DestCatalyst:
+		selectedID = "catalyst"
+	}
+
 	// Pass screen width - selector calculates its own width (50-60%)
-	m.selector = NewSelectorWithSelected("Select Destination", items, m.cfg.Destination.UDID, m.width, m.styles)
+	m.selector = NewSelectorWithSelected("Select Destination", items, selectedID, m.width, m.styles)
 	m.selectorType = SelectorDestination
 	m.mode = ModeSelector
 }
@@ -506,6 +515,34 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 		}
 
 	case SelectorDestination:
+		if item.ID == "macos" {
+			m.cfg.Destination = core.Destination{
+				Kind:     core.DestMacOS,
+				UDID:     "",
+				Name:     "My Mac",
+				Platform: "macOS",
+				OS:       "macOS",
+			}
+			m.setStatus("Destination: " + item.Title)
+			if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+				m.lastErr = err.Error()
+			}
+			return
+		}
+		if item.ID == "catalyst" {
+			m.cfg.Destination = core.Destination{
+				Kind:     core.DestCatalyst,
+				UDID:     "",
+				Name:     "My Mac (Catalyst)",
+				Platform: "macOS",
+				OS:       "macOS",
+			}
+			m.setStatus("Destination: " + item.Title)
+			if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
+				m.lastErr = err.Error()
+			}
+			return
+		}
 		// Find the destination in our lists
 		for _, sim := range m.info.Simulators {
 			if sim.UDID == item.ID {
@@ -1446,6 +1483,13 @@ func (m *Model) stopApp() tea.Cmd {
 			if err := core.DevicectlStop(ctx, target.UDID, target.PID, target.BundleID, nil); err != nil {
 				return statusMsg("Stop failed: " + err.Error())
 			}
+		case string(core.DestMacOS), string(core.DestCatalyst):
+			if target.PID == 0 {
+				return statusMsg("Missing PID for stop")
+			}
+			if err := syscall.Kill(target.PID, syscall.SIGTERM); err != nil {
+				return statusMsg("Stop failed: " + err.Error())
+			}
 		default:
 			return statusMsg("Stop not supported for target: " + target.Target)
 		}
@@ -1985,6 +2029,17 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	m.progressCur = 0
 	m.progressTotal = 0
 	m.tabView.SummaryTab.SetLogIdle(0)
+
+	// If a run failed or was canceled before launch, exit split view.
+	if msg.cmd == "run" && msg.run == nil {
+		m.runMode.Active = false
+		m.runMode.ConsoleLogs = nil
+		m.runMode.FocusPane = PaneBuild
+		m.runMode.ConsolePos = 0
+		m.runMode.ConsoleFollow = true
+		m.runMode.Status = ""
+		m.runMode.StatusAt = time.Time{}
+	}
 
 	// Hide progress bar
 	m.progressBar.Hide()

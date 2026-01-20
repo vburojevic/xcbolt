@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -458,6 +459,50 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": lr.PID, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": lr.PID, "bundleId": appInfo.BundleID}))
 		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: lr.PID, Target: "device", UDID: udid}, cfg, nil
+
+	case DestMacOS, DestCatalyst:
+		if appInfo.Executable == "" {
+			err := errors.New("missing CFBundleExecutable in app bundle")
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "APP_EXECUTABLE_MISSING",
+				Message:    "Missing app executable",
+				Detail:     err.Error(),
+				Suggestion: "Ensure the target builds a macOS app bundle.",
+			}))
+			return RunResult{}, cfg, err
+		}
+		execPath := filepath.Join(appPath, "Contents", "MacOS", appInfo.Executable)
+		if _, statErr := os.Stat(execPath); statErr != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "APP_EXECUTABLE_MISSING",
+				Message:    "App executable not found",
+				Detail:     statErr.Error(),
+				Suggestion: "Ensure the target builds a macOS app bundle.",
+			}))
+			return RunResult{}, cfg, statErr
+		}
+
+		emitMaybe(emit, Status("run", "Launching app on Mac", map[string]any{"app": appPath}))
+		cmd := exec.Command(execPath, cfg.Launch.Options...)
+		cmd.Env = mergeEnv(os.Environ(), launchEnv)
+		if err := cmd.Start(); err != nil {
+			emitMaybe(emit, Err("run", ErrorObject{
+				Code:       "MAC_LAUNCH_FAILED",
+				Message:    "Failed to launch app on Mac",
+				Detail:     err.Error(),
+				Suggestion: "Check app bundle and permissions.",
+			}))
+			return RunResult{}, cfg, err
+		}
+		pid := 0
+		if cmd.Process != nil {
+			pid = cmd.Process.Pid
+			_ = cmd.Process.Release()
+		}
+		_, _ = AddSession(projectRoot, appInfo.BundleID, pid, string(cfg.Destination.Kind), "")
+		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
+		emitMaybe(emit, Result("run", true, map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
+		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: pid, Target: string(cfg.Destination.Kind)}, cfg, nil
 
 	default:
 		return RunResult{}, cfg, fmt.Errorf("run not implemented for destination kind %q", cfg.Destination.Kind)
