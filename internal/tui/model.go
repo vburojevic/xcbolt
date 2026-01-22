@@ -1091,8 +1091,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	case keyMatches(msg, m.keys.Cancel):
 		if m.running {
 			m.cancelRunningOp()
+			return tea.ClearScreen
 		} else if m.runMode.Active && !m.running {
-			return m.stopApp()
+			return tea.Batch(m.stopApp(), tea.ClearScreen)
 		}
 
 	case keyMatches(msg, m.keys.Build):
