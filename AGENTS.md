@@ -43,6 +43,10 @@ Useful CLI examples:
 - PRs should include: a clear summary, testing notes, and screenshots for TUI/UI changes.
 - Link related issues and mention any Xcode/tooling assumptions.
 
+## Releases
+- Tag pushes (`v*`) trigger the GitHub Actions release workflow (GoReleaser).
+- Do not run local `goreleaser release` for tag pushes to avoid asset upload conflicts; let CI publish the release.
+
 ## Requirements & Configuration Tips
 - Xcode Command Line Tools must be installed (`xcrun`, `xcodebuild`, `simctl`, `devicectl`).
 - Run `./xcbolt doctor` to validate environment before debugging failures.
