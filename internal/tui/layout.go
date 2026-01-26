@@ -174,7 +174,8 @@ func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar strin
 		contentHeight := maxInt(0, l.Height-headerHeight)
 		contentStyle := lipgloss.NewStyle().
 			Width(l.Width).
-			Height(contentHeight)
+			Height(contentHeight).
+			MaxHeight(contentHeight)
 
 		return lipgloss.JoinVertical(lipgloss.Left,
 			header,
@@ -204,7 +205,8 @@ func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar strin
 	// Render content with calculated height
 	contentStyle := lipgloss.NewStyle().
 		Width(l.Width).
-		Height(contentHeight)
+		Height(contentHeight).
+		MaxHeight(contentHeight)
 	renderedContent := contentStyle.Render(content)
 
 	// Join all parts
@@ -255,8 +257,8 @@ func (l Layout) RenderSplitLayout(statusBar, progressBar, topContent, bottomCont
 	bottomHeight := totalContentHeight - topHeight
 
 	// Render panes
-	topStyle := lipgloss.NewStyle().Width(l.Width).Height(topHeight)
-	bottomStyle := lipgloss.NewStyle().Width(l.Width).Height(bottomHeight)
+	topStyle := lipgloss.NewStyle().Width(l.Width).Height(topHeight).MaxHeight(topHeight)
+	bottomStyle := lipgloss.NewStyle().Width(l.Width).Height(bottomHeight).MaxHeight(bottomHeight)
 
 	renderedTop := topStyle.Render(topContent)
 	renderedBottom := bottomStyle.Render(bottomContent)
