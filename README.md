@@ -170,6 +170,12 @@ xcbolt --json test | jq '.type'
 
 ---
 
+## Releases
+
+Tag pushes (`v*`) trigger the GitHub Actions release workflow (GoReleaser). To avoid asset upload conflicts, do not run local `goreleaser release` for tag pushes—let CI publish the release.
+
+---
+
 ## Configuration
 
 Running `xcbolt init` creates `.xcbolt/config.json`:
