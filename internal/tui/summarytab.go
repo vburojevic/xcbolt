@@ -765,7 +765,9 @@ func (st *SummaryTab) failedView(styles Styles) string {
 		Foreground(styles.Colors.TextMuted)
 
 	actions := lipgloss.JoinHorizontal(lipgloss.Center,
-		actionStyle.Render("[B]"), keyStyle.Render(" Rebuild   "),
+		actionStyle.Render("[B]"), keyStyle.Render(" Build   "),
+		actionStyle.Render("[R]"), keyStyle.Render(" Run   "),
+		actionStyle.Render("[T]"), keyStyle.Render(" Test   "),
 		actionStyle.Render("[C]"), keyStyle.Render(" Clean"),
 	)
 
