@@ -115,6 +115,18 @@ func (it *IssuesTab) AddIssue(issueType IssueType, line string) {
 	issue := it.parseIssue(issueType, line)
 	it.Issues = append(it.Issues, issue)
 	it.sortIssues()
+	if maxIssues > 0 && len(it.Issues) > maxIssues {
+		it.Issues = it.Issues[:maxIssues]
+		if it.Selected >= len(it.Issues) {
+			it.Selected = len(it.Issues) - 1
+			if it.Selected < 0 {
+				it.Selected = 0
+			}
+		}
+		if it.ScrollPos > it.Selected {
+			it.ScrollPos = it.Selected
+		}
+	}
 }
 
 // parseIssue extracts issue details from a log line

@@ -86,6 +86,16 @@ func (st *StreamTab) AddLine(text string, lineType TabLineType) {
 		Raw:       text,
 	}
 	st.Lines = append(st.Lines, line)
+	if maxStreamTabLines > 0 && len(st.Lines) > maxStreamTabLines {
+		drop := len(st.Lines) - maxStreamTabLines
+		st.Lines = st.Lines[drop:]
+		if !st.AutoFollow {
+			st.ScrollPos -= drop
+			if st.ScrollPos < 0 {
+				st.ScrollPos = 0
+			}
+		}
+	}
 
 	// Auto-scroll if following
 	if st.AutoFollow {

@@ -1082,6 +1082,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 	// Normal mode
 	switch {
 	case keyMatches(msg, m.keys.Quit):
+		if m.running {
+			m.cancelRunningOp()
+		}
 		return tea.Quit
 
 	case keyMatches(msg, m.keys.Help):
@@ -2329,8 +2332,21 @@ func (m *Model) appendConsoleLog(line string) {
 	for _, wrapped := range m.wrapConsoleLines(msg) {
 		m.runMode.ConsoleLogs = append(m.runMode.ConsoleLogs, wrapped)
 	}
+	if maxConsoleLines > 0 && len(m.runMode.ConsoleLogs) > maxConsoleLines {
+		drop := len(m.runMode.ConsoleLogs) - maxConsoleLines
+		m.runMode.ConsoleLogs = m.runMode.ConsoleLogs[drop:]
+		if !m.runMode.ConsoleFollow && m.runMode.ConsolePos > 0 {
+			m.runMode.ConsolePos -= drop
+			if m.runMode.ConsolePos < 0 {
+				m.runMode.ConsolePos = 0
+			}
+		}
+	}
 	// Auto-scroll if at bottom
 	maxPos := len(m.runMode.ConsoleLogs) - m.consolePaneHeight()
+	if maxPos < 0 {
+		maxPos = 0
+	}
 	if m.runMode.ConsoleFollow || m.runMode.ConsolePos >= maxPos-1 {
 		m.runMode.ConsolePos = maxPos
 		m.runMode.ConsoleFollow = true
