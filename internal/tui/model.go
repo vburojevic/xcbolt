@@ -2823,6 +2823,11 @@ func (m Model) runModeHintsBar() string {
 			Key  string
 			Desc string
 		}{"x", "stop"})
+	} else {
+		hints = append(hints, struct {
+			Key  string
+			Desc string
+		}{"r", "rerun"})
 	}
 	hints = append(hints,
 		struct {
