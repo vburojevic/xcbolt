@@ -1777,6 +1777,14 @@ func (m *Model) handleEvent(ev core.Event) {
 		}
 	}
 	if m.runMode.Active && m.runningCmd == "run" && isConsoleEvent(ev) {
+		if m.currentStage != "Running" {
+			m.currentStage = "Running"
+			m.stageProgress = ""
+			m.progressCur = 0
+			m.progressTotal = 0
+			m.progressBar.SetProgress(0, 0, "Running")
+			m.tabView.SummaryTab.UpdateProgress("", 0, 0, "Running")
+		}
 		consoleLine := m.formatConsoleEvent(ev)
 		if m.consoleLevelEnabled(consoleLine, ev) {
 			m.appendConsoleLog(consoleLine)
