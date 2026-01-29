@@ -2030,6 +2030,23 @@ func extractConsoleLevel(line string) string {
 	return strings.ToUpper(string(r[0]))
 }
 
+func isCanceledErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "canceled") || strings.Contains(msg, "cancelled") {
+		return true
+	}
+	if strings.Contains(msg, "signal: interrupt") || strings.Contains(msg, "signal: killed") {
+		return true
+	}
+	return false
+}
+
 func (m *Model) handleOpDone(msg opDoneMsg) {
 	m.running = false
 	m.runningCmd = ""
@@ -2074,7 +2091,7 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 
 	success := msg.err == nil
-	canceled := errors.Is(msg.err, context.Canceled)
+	canceled := isCanceledErr(msg.err)
 	status := BuildStatusFailed
 	if canceled {
 		status = BuildStatusCanceled
