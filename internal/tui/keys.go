@@ -33,11 +33,12 @@ type keyMap struct {
 	Cancel key.Binding
 
 	// Actions
-	Build key.Binding
-	Run   key.Binding
-	Test  key.Binding
-	Clean key.Binding
-	Stop  key.Binding
+	Build  key.Binding
+	Run    key.Binding
+	Test   key.Binding
+	Clean  key.Binding
+	Stop   key.Binding
+	Repeat key.Binding
 
 	// Selectors
 	Scheme        key.Binding
@@ -133,6 +134,10 @@ func defaultKeyMap() keyMap {
 		Stop: key.NewBinding(
 			key.WithKeys("x"),
 			key.WithHelp("x", "stop"),
+		),
+		Repeat: key.NewBinding(
+			key.WithKeys("R"),
+			key.WithHelp("R", "repeat"),
 		),
 
 		// Selectors
@@ -313,7 +318,7 @@ func (k keyMap) ShortHelp() []key.Binding {
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		// Actions
-		{k.Build, k.Run, k.Test, k.Clean, k.Stop},
+		{k.Build, k.Run, k.Test, k.Clean, k.Stop, k.Repeat},
 		// Configuration
 		{k.Scheme, k.Configuration, k.Destination, k.Palette, k.Init, k.Refresh},
 		// Tabs
@@ -340,11 +345,12 @@ func (k keyMap) ActionHints() []struct {
 		{"b", "Build"},
 		{"t", "Test"},
 		{"c", "Clean"},
+		{"R", "Repeat"},
 		{"^K", "Commands"},
 	}
 }
 
 // FooterHints returns the hints for the footer bar
 func (k keyMap) FooterHints() string {
-	return "b:build  r:run  t:test  1-3:tabs  /:search  ?:help"
+	return "b:build  r:run  t:test  R:repeat  1-3:tabs  /:search  ?:help"
 }

@@ -408,6 +408,7 @@ func DefaultHints() []HintItem {
 		{Key: "b", Desc: "build"},
 		{Key: "r", Desc: "run"},
 		{Key: "t", Desc: "test"},
+		{Key: "R", Desc: "repeat"},
 		{Key: "s", Desc: "scheme"},
 		{Key: "~", Desc: "build config"},
 		{Key: "d", Desc: "dest"},

@@ -164,6 +164,8 @@ type Model struct {
 	// Operation state
 	running    bool
 	runningCmd string
+	lastOp     string
+	pendingOp  string
 	cancelFn   context.CancelFunc
 	eventCh    <-chan core.Event
 	doneCh     <-chan opDoneMsg
@@ -410,6 +412,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case opDoneMsg:
 		m.handleOpDone(msg)
 		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride))
+		if m.pendingOp != "" {
+			next := m.pendingOp
+			m.pendingOp = ""
+			cmds = append(cmds, m.startOp(next))
+		}
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -724,6 +731,8 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 		if !m.running {
 			return m.startOp("test")
 		}
+	case "repeat":
+		return m.repeatLastOp()
 	case "clean":
 		if !m.running {
 			return m.startOp("clean")
@@ -1118,6 +1127,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		if !m.running {
 			return m.startOp("clean")
 		}
+
+	case keyMatches(msg, m.keys.Repeat):
+		return m.repeatLastOp()
 
 	case keyMatches(msg, m.keys.Stop):
 		if m.running {
@@ -2193,7 +2205,23 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	}
 }
 
+func (m *Model) repeatLastOp() tea.Cmd {
+	if m.lastOp == "" {
+		m.setStatus("No previous action to repeat")
+		return nil
+	}
+	if m.running {
+		m.pendingOp = m.lastOp
+		m.cancelRunningOp()
+		return nil
+	}
+	return m.startOp(m.lastOp)
+}
+
 func (m *Model) startOp(name string) tea.Cmd {
+	if name != "" {
+		m.lastOp = name
+	}
 	m.running = true
 	m.runningCmd = name
 	now := time.Now()
@@ -2848,11 +2876,23 @@ func (m Model) runModeHintsBar() string {
 			Key  string
 			Desc string
 		}{"x", "stop"})
+		if m.lastOp != "" {
+			hints = append(hints, struct {
+				Key  string
+				Desc string
+			}{"R", "restart"})
+		}
 	} else {
 		hints = append(hints, struct {
 			Key  string
 			Desc string
-		}{"r", "rerun"})
+		}{"r", "run"})
+		if m.lastOp != "" {
+			hints = append(hints, struct {
+				Key  string
+				Desc string
+			}{"R", "repeat"})
+		}
 	}
 	hints = append(hints,
 		struct {

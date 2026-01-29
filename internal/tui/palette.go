@@ -92,6 +92,7 @@ func DefaultCommands() []Command {
 		{ID: "build", Name: "Build", Description: "Build the project", Shortcut: "b", Category: "Actions"},
 		{ID: "run", Name: "Run", Description: "Build and run the app", Shortcut: "r", Category: "Actions"},
 		{ID: "test", Name: "Test", Description: "Run tests", Shortcut: "t", Category: "Actions"},
+		{ID: "repeat", Name: "Repeat Last Action", Description: "Re-run the most recent action", Shortcut: "R", Category: "Actions"},
 		{ID: "clean", Name: "Clean", Description: "Clean build artifacts", Shortcut: "c", Category: "Actions"},
 		{ID: "clean-derived", Name: "Clean DerivedData", Description: "Remove .xcbolt/DerivedData", Category: "Actions"},
 		{ID: "clean-results", Name: "Clean Results", Description: "Remove .xcbolt/Results", Category: "Actions"},
