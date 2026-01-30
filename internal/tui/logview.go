@@ -439,6 +439,22 @@ func (v *PhaseView) ToggleRawMode() {
 
 // FindNextError finds the next error line and returns its phase and line index
 func (v *PhaseView) FindNextError(currentPhase, currentLine int) (int, int) {
+	if len(v.Phases) == 0 {
+		return -1, -1
+	}
+	if currentPhase < 0 {
+		currentPhase = 0
+		currentLine = -1
+	} else if currentPhase >= len(v.Phases) {
+		currentPhase = len(v.Phases) - 1
+		currentLine = len(v.Phases[currentPhase].Lines) - 1
+	}
+	if currentLine < -1 {
+		currentLine = -1
+	}
+	if currentLine >= len(v.Phases[currentPhase].Lines) {
+		currentLine = len(v.Phases[currentPhase].Lines) - 1
+	}
 	// Start searching from current position
 	for p := currentPhase; p < len(v.Phases); p++ {
 		startLine := 0
@@ -475,6 +491,22 @@ func (v *PhaseView) FindNextError(currentPhase, currentLine int) (int, int) {
 
 // FindPrevError finds the previous error line
 func (v *PhaseView) FindPrevError(currentPhase, currentLine int) (int, int) {
+	if len(v.Phases) == 0 {
+		return -1, -1
+	}
+	if currentPhase < 0 {
+		currentPhase = 0
+	}
+	if currentPhase >= len(v.Phases) {
+		currentPhase = len(v.Phases) - 1
+		currentLine = len(v.Phases[currentPhase].Lines)
+	}
+	if currentLine < 0 {
+		currentLine = 0
+	}
+	if currentLine > len(v.Phases[currentPhase].Lines) {
+		currentLine = len(v.Phases[currentPhase].Lines)
+	}
 	// Search backwards from current position
 	for p := currentPhase; p >= 0; p-- {
 		endLine := len(v.Phases[p].Lines) - 1
