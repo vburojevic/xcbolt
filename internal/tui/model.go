@@ -164,6 +164,7 @@ type Model struct {
 	// Operation state
 	running    bool
 	runningCmd string
+	pendingOp  string
 	cancelFn   context.CancelFunc
 	eventCh    <-chan core.Event
 	doneCh     <-chan opDoneMsg
@@ -410,6 +411,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case opDoneMsg:
 		m.handleOpDone(msg)
 		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride))
+		if m.pendingOp != "" {
+			next := m.pendingOp
+			m.pendingOp = ""
+			cmds = append(cmds, m.startOp(next))
+		}
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -709,25 +715,37 @@ func (m *Model) openPalette() {
 	m.mode = ModePalette
 }
 
+func (m *Model) startOrRestartOp(name string) tea.Cmd {
+	if m.running {
+		m.pendingOp = name
+		m.cancelRunningOp()
+		return nil
+	}
+	return m.startOp(name)
+}
+
+func (m *Model) stopOrCancelOp() tea.Cmd {
+	if m.running {
+		m.cancelRunningOp()
+		return tea.ClearScreen
+	}
+	if m.runMode.Active {
+		return tea.Batch(m.stopApp(), tea.ClearScreen)
+	}
+	return nil
+}
+
 func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 	switch cmd.ID {
 	// Actions
 	case "build":
-		if !m.running {
-			return m.startOp("build")
-		}
+		return m.startOrRestartOp("build")
 	case "run":
-		if !m.running {
-			return m.startOp("run")
-		}
+		return m.startOrRestartOp("run")
 	case "test":
-		if !m.running {
-			return m.startOp("test")
-		}
+		return m.startOrRestartOp("test")
 	case "clean":
-		if !m.running {
-			return m.startOp("clean")
-		}
+		return m.startOrRestartOp("clean")
 	case "clean-derived":
 		if !m.running {
 			return m.startOp("clean-derived")
@@ -745,11 +763,7 @@ func (m *Model) executePaletteCommand(cmd *Command) tea.Cmd {
 			return m.startOp("clean-spm-cache")
 		}
 	case "stop":
-		if m.running {
-			m.cancelRunningOp()
-			return nil
-		}
-		return m.stopApp()
+		return m.stopOrCancelOp()
 
 	// Archive/Profile (not implemented yet)
 	case "archive", "archive-appstore", "archive-adhoc", "profile", "analyze":
@@ -1092,38 +1106,22 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 		m.setupHelpViewport()
 
 	case keyMatches(msg, m.keys.Cancel):
-		if m.running {
-			m.cancelRunningOp()
-			return tea.ClearScreen
-		} else if m.runMode.Active && !m.running {
-			return tea.Batch(m.stopApp(), tea.ClearScreen)
-		}
+		return m.stopOrCancelOp()
 
 	case keyMatches(msg, m.keys.Build):
-		if !m.running {
-			return m.startOp("build")
-		}
+		return m.startOrRestartOp("build")
 
 	case keyMatches(msg, m.keys.Run):
-		if !m.running {
-			return m.startOp("run")
-		}
+		return m.startOrRestartOp("run")
 
 	case keyMatches(msg, m.keys.Test):
-		if !m.running {
-			return m.startOp("test")
-		}
+		return m.startOrRestartOp("test")
 
 	case keyMatches(msg, m.keys.Clean):
-		if !m.running {
-			return m.startOp("clean")
-		}
+		return m.startOrRestartOp("clean")
 
 	case keyMatches(msg, m.keys.Stop):
-		if m.running {
-			m.cancelRunningOp()
-		}
-		return nil
+		return m.stopOrCancelOp()
 
 	case keyMatches(msg, m.keys.Scheme):
 		m.openSchemeSelector()
@@ -2621,6 +2619,9 @@ func (m Model) mainView() string {
 	hints := DefaultHints()
 	if m.running {
 		hints = append(hints, HintItem{Key: "x", Desc: "stop"})
+		if key := actionKeyForCmd(m.runningCmd); key != "" {
+			hints = append(hints, HintItem{Key: key, Desc: "restart"})
+		}
 	}
 	hintsBarContent := m.hintsBar.renderHints(hints, m.styles)
 
@@ -2827,6 +2828,21 @@ func (m Model) consoleHeader() string {
 	return labelStyle.Render(status)
 }
 
+func actionKeyForCmd(cmd string) string {
+	switch cmd {
+	case "build":
+		return "b"
+	case "run":
+		return "r"
+	case "test":
+		return "t"
+	case "clean":
+		return "c"
+	default:
+		return ""
+	}
+}
+
 // runModeHintsBar returns hints specific to run mode
 func (m Model) runModeHintsBar() string {
 	s := m.styles
@@ -2848,6 +2864,12 @@ func (m Model) runModeHintsBar() string {
 			Key  string
 			Desc string
 		}{"x", "stop"})
+		if key := actionKeyForCmd(m.runningCmd); key != "" {
+			hints = append(hints, struct {
+				Key  string
+				Desc string
+			}{key, "restart"})
+		}
 	} else {
 		hints = append(hints, struct {
 			Key  string
@@ -2862,7 +2884,7 @@ func (m Model) runModeHintsBar() string {
 		struct {
 			Key  string
 			Desc string
-		}{"esc", "cancel"},
+		}{"x/esc", "cancel"},
 		struct {
 			Key  string
 			Desc string
