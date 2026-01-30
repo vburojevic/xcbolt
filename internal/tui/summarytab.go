@@ -851,6 +851,8 @@ func (st *SummaryTab) canceledView(styles Styles) string {
 
 	actions := lipgloss.JoinHorizontal(lipgloss.Center,
 		actionStyle.Render("[B]"), keyStyle.Render(" Rebuild   "),
+		actionStyle.Render("[R]"), keyStyle.Render(" Run   "),
+		actionStyle.Render("[T]"), keyStyle.Render(" Test   "),
 		actionStyle.Render("[C]"), keyStyle.Render(" Clean"),
 	)
 
