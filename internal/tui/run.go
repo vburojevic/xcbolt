@@ -10,7 +10,6 @@ func Run(projectRoot string, configPath string, overrides ConfigOverrides) error
 		m,
 		tea.WithAltScreen(),
 		tea.WithReportFocus(), // required for huh focus support in larger programs
-		tea.WithMouseAllMotion(),
 	)
 	_, err := p.Run()
 	return err
