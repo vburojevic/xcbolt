@@ -215,6 +215,11 @@ func (tv *TabView) View(styles Styles) string {
 	tabBar := tv.renderTabBar(styles)
 	content := tv.renderContent(styles)
 
+	// Guard against accidental double-render of the tab bar.
+	if content == tabBar || strings.HasPrefix(content, tabBar+"\n") {
+		return content
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, tabBar, content)
 }
 
