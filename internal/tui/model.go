@@ -2880,18 +2880,18 @@ func (m Model) runModeHintsBar() string {
 			hints = append(hints, struct {
 				Key  string
 				Desc string
-			}{"R", "restart"})
+			}{"r", "restart"})
 		}
 	} else {
 		hints = append(hints, struct {
 			Key  string
 			Desc string
-		}{"r", "run"})
+		}{"R", "run"})
 		if m.lastOp != "" {
 			hints = append(hints, struct {
 				Key  string
 				Desc string
-			}{"R", "repeat"})
+			}{"r", "repeat"})
 		}
 	}
 	hints = append(hints,

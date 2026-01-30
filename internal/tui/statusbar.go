@@ -406,9 +406,9 @@ func NewHintsBar() HintsBar {
 func DefaultHints() []HintItem {
 	return []HintItem{
 		{Key: "b", Desc: "build"},
-		{Key: "r", Desc: "run"},
+		{Key: "R", Desc: "run"},
 		{Key: "t", Desc: "test"},
-		{Key: "R", Desc: "repeat"},
+		{Key: "r", Desc: "repeat"},
 		{Key: "s", Desc: "scheme"},
 		{Key: "~", Desc: "build config"},
 		{Key: "d", Desc: "dest"},

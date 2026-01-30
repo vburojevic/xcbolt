@@ -120,8 +120,8 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("b", "build"),
 		),
 		Run: key.NewBinding(
-			key.WithKeys("r"),
-			key.WithHelp("r", "run"),
+			key.WithKeys("R"),
+			key.WithHelp("R", "run"),
 		),
 		Test: key.NewBinding(
 			key.WithKeys("t"),
@@ -136,8 +136,8 @@ func defaultKeyMap() keyMap {
 			key.WithHelp("x", "stop"),
 		),
 		Repeat: key.NewBinding(
-			key.WithKeys("R"),
-			key.WithHelp("R", "repeat"),
+			key.WithKeys("r"),
+			key.WithHelp("r", "repeat"),
 		),
 
 		// Selectors
@@ -341,16 +341,16 @@ func (k keyMap) ActionHints() []struct {
 		Key  string
 		Name string
 	}{
-		{"r", "Run"},
+		{"R", "Run"},
 		{"b", "Build"},
 		{"t", "Test"},
 		{"c", "Clean"},
-		{"R", "Repeat"},
+		{"r", "Repeat"},
 		{"^K", "Commands"},
 	}
 }
 
 // FooterHints returns the hints for the footer bar
 func (k keyMap) FooterHints() string {
-	return "b:build  r:run  t:test  R:repeat  1-3:tabs  /:search  ?:help"
+	return "b:build  R:run  t:test  r:repeat  1-3:tabs  /:search  ?:help"
 }
