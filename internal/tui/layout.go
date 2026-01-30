@@ -145,8 +145,17 @@ func (l Layout) RenderProgressBar(content string, styles Styles) string {
 
 // RenderHintsBar renders the hints bar at the bottom
 func (l Layout) RenderHintsBar(content string, styles Styles) string {
-	if !l.ShowHintsBar || l.MinimalMode {
+	if !l.ShowHintsBar {
 		return ""
+	}
+
+	if l.MinimalMode {
+		return lipgloss.NewStyle().
+			Foreground(styles.Colors.TextSubtle).
+			Width(l.Width).
+			MaxWidth(l.Width).
+			MaxHeight(1).
+			Render(" " + content)
 	}
 
 	separator := lipgloss.NewStyle().
@@ -167,19 +176,30 @@ func (l Layout) RenderHintsBar(content string, styles Styles) string {
 // KEY FIX: Calculate content height DYNAMICALLY based on actual rendered header/hints heights
 func (l Layout) RenderFullLayout(statusBar, progressBar, content, hintsBar string, styles Styles) string {
 	if l.MinimalMode {
-		// Minimal mode: header + content only
+		// Minimal mode: header + content + optional hints
 		header := l.RenderHeader(statusBar, styles)
+		hints := l.RenderHintsBar(hintsBar, styles)
 		headerHeight := lipgloss.Height(header)
+		hintsHeight := lipgloss.Height(hints)
 
-		contentHeight := maxInt(0, l.Height-headerHeight)
+		contentHeight := maxInt(0, l.Height-headerHeight-hintsHeight)
 		contentStyle := lipgloss.NewStyle().
 			Width(l.Width).
 			Height(contentHeight).
 			MaxHeight(contentHeight)
 
+		renderedContent := contentStyle.Render(content)
+		if hints != "" {
+			return lipgloss.JoinVertical(lipgloss.Left,
+				header,
+				renderedContent,
+				hints,
+			)
+		}
+
 		return lipgloss.JoinVertical(lipgloss.Left,
 			header,
-			contentStyle.Render(content),
+			renderedContent,
 		)
 	}
 
