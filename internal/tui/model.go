@@ -167,13 +167,17 @@ type Model struct {
 	pendingOp  string
 	cancelFn   context.CancelFunc
 	eventCh    <-chan core.Event
-	doneCh     <-chan opDoneMsg
-	tickCount  int // For spinner animation timing
-	opStart    time.Time
-	lastEvent  time.Time
-	lastLog    time.Time
-	lastBeat   time.Time
-	lastStatus string
+	// eventStopCh is closed to stop the event waiter cmd without closing eventCh.
+	// This avoids "send on closed channel" panics if core continues emitting briefly
+	// after an op completes/cancels.
+	eventStopCh chan struct{}
+	doneCh      <-chan opDoneMsg
+	tickCount   int // For spinner animation timing
+	opStart     time.Time
+	lastEvent   time.Time
+	lastLog     time.Time
+	lastBeat    time.Time
+	lastStatus  string
 
 	// Progress tracking (for stage indicators)
 	currentStage  string
@@ -310,6 +314,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		prevMinimal := m.layout.MinimalMode
 		m.width = msg.Width
 		m.height = msg.Height
 		// Update layout dimensions
@@ -321,6 +326,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Responsive: warn if terminal is too small
 		if m.width < 80 || m.height < 20 {
 			m.setStatus("Terminal too small (min 80x20)")
+		}
+		// When minimal mode toggles (1-line vs 2-line header/hints), we can leave
+		// stale lines on screen unless we clear once.
+		if m.layout.MinimalMode != prevMinimal {
+			cmds = append(cmds, tea.ClearScreen)
 		}
 
 	case contextLoadedMsg:
@@ -404,12 +414,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ev := core.Event(msg)
 		m.handleEvent(ev)
 		// PhaseView handles its own auto-scroll
-		if m.eventCh != nil {
-			cmds = append(cmds, waitForEvent(m.eventCh))
+		if m.eventCh != nil && m.eventStopCh != nil {
+			cmds = append(cmds, waitForEvent(m.eventCh, m.eventStopCh))
 		}
 
 	case opDoneMsg:
+		prevSplit := m.runMode.Active
 		m.handleOpDone(msg)
+		if m.runMode.Active != prevSplit {
+			cmds = append(cmds, tea.ClearScreen)
+		}
 		cmds = append(cmds, loadContextCmd(m.projectRoot, m.configPath, m.cfgOverride))
 		if m.pendingOp != "" {
 			next := m.pendingOp
@@ -2050,6 +2064,10 @@ func (m *Model) handleOpDone(msg opDoneMsg) {
 	m.runningCmd = ""
 	m.cancelFn = nil
 	m.eventCh = nil
+	if m.eventStopCh != nil {
+		close(m.eventStopCh)
+		m.eventStopCh = nil
+	}
 	m.doneCh = nil
 	m.currentStage = ""
 	m.stageProgress = ""
@@ -2238,19 +2256,20 @@ func (m *Model) startOp(name string) tea.Cmd {
 	m.saveRecentCombo()
 
 	events := make(chan core.Event, 8192)
+	stopEvents := make(chan struct{})
 	done := make(chan opDoneMsg, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancelFn = cancel
 	m.eventCh = events
+	m.eventStopCh = stopEvents
 	m.doneCh = done
 
-	emitter := &chanEmitter{ch: events}
+	emitter := &chanEmitter{ch: events, stop: stopEvents}
 
 	cfg := m.cfg
 	root := m.projectRoot
 
 	go func() {
-		defer close(events)
 		switch name {
 		case "build":
 			res, cfg2, err := core.Build(ctx, root, cfg, emitter)
@@ -2308,24 +2327,37 @@ func (m *Model) startOp(name string) tea.Cmd {
 		}
 		close(done)
 	}()
-	return tea.Batch(waitForEvent(events), waitForDone(done), tickCmd())
+	// Clear once at op start to avoid stale layout artifacts when switching modes.
+	return tea.Batch(waitForEvent(events, stopEvents), waitForDone(done), tickCmd(), tea.ClearScreen)
 }
 
 type chanEmitter struct {
-	ch chan<- core.Event
+	ch   chan<- core.Event
+	stop <-chan struct{}
 }
 
 func (e *chanEmitter) Emit(ev core.Event) {
-	e.ch <- ev
+	// Never block core operations on UI rendering.
+	// Also, stop accepting events once the op is done/canceled.
+	select {
+	case <-e.stop:
+		return
+	default:
+	}
+	select {
+	case e.ch <- ev:
+	default:
+	}
 }
 
-func waitForEvent(ch <-chan core.Event) tea.Cmd {
+func waitForEvent(ch <-chan core.Event, stop <-chan struct{}) tea.Cmd {
 	return func() tea.Msg {
-		ev, ok := <-ch
-		if !ok {
+		select {
+		case <-stop:
 			return nil
+		case ev := <-ch:
+			return eventMsg(ev)
 		}
-		return eventMsg(ev)
 	}
 }
 
