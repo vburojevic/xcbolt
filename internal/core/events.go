@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const EventSchemaVersion = 2
+
 type ErrorObject struct {
 	Code       string `json:"code"`
 	Message    string `json:"message"`
@@ -15,9 +17,9 @@ type ErrorObject struct {
 }
 
 type Event struct {
-	V     int          `json:"v"`
-	TS    string       `json:"ts"`
-	Cmd   string       `json:"cmd"`
+	V     int          `json:"version"`
+	TS    string       `json:"timestamp"`
+	Cmd   string       `json:"command"`
 	Type  string       `json:"type"`
 	Level string       `json:"level,omitempty"`
 	Code  string       `json:"code,omitempty"`
@@ -33,14 +35,20 @@ type Emitter interface {
 }
 
 type NDJSONEmitter struct {
-	w io.Writer
+	w       io.Writer
+	version int
 }
 
-func NewNDJSONEmitter(w io.Writer) *NDJSONEmitter { return &NDJSONEmitter{w: w} }
+func NewNDJSONEmitter(w io.Writer, version int) *NDJSONEmitter {
+	if version <= 0 {
+		version = EventSchemaVersion
+	}
+	return &NDJSONEmitter{w: w, version: version}
+}
 
 func (e *NDJSONEmitter) Emit(ev Event) {
 	if ev.V == 0 {
-		ev.V = 1
+		ev.V = e.version
 	}
 	if ev.TS == "" {
 		ev.TS = NowTS()
@@ -48,7 +56,7 @@ func (e *NDJSONEmitter) Emit(ev Event) {
 	b, err := json.Marshal(ev)
 	if err != nil {
 		// Last resort: emit a minimal JSON line.
-		fmt.Fprintf(e.w, "{\"v\":1,\"ts\":\"%s\",\"cmd\":\"%s\",\"type\":\"error\",\"message\":\"failed to encode event: %v\"}\n", NowTS(), ev.Cmd, err)
+		fmt.Fprintf(e.w, "{\"version\":%d,\"timestamp\":\"%s\",\"command\":\"%s\",\"type\":\"error\",\"message\":\"failed to encode event: %v\"}\n", e.version, NowTS(), ev.Cmd, err)
 		return
 	}
 	e.w.Write(b)
@@ -83,11 +91,11 @@ func (e *TextEmitter) Emit(ev Event) {
 }
 
 func Status(cmd, msg string, data any) Event {
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "status", Level: "info", Msg: msg, Data: data}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "status", Level: "info", Msg: msg, Data: data}
 }
 
 func Log(cmd, msg string) Event {
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg}
 }
 
 func LogStream(cmd, msg, stream string) Event {
@@ -95,23 +103,23 @@ func LogStream(cmd, msg, stream string) Event {
 	if stream != "" {
 		data["stream"] = stream
 	}
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: data}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: data}
 }
 
 func LogPretty(cmd, msg string) Event {
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: map[string]any{"pretty": true}}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "log", Level: "info", Msg: msg, Data: map[string]any{"pretty": true}}
 }
 
 func LogRaw(cmd, msg string) Event {
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "log_raw", Level: "info", Msg: msg}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "log_raw", Level: "info", Msg: msg}
 }
 
 func Warn(cmd, msg string) Event {
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "warning", Level: "warn", Msg: msg}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "warning", Level: "warn", Msg: msg}
 }
 
 func Err(cmd string, eo ErrorObject) Event {
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "error", Level: "error", Err: &eo, Msg: eo.Message}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "error", Level: "error", Err: &eo, Msg: eo.Message}
 }
 
 func Result(cmd string, ok bool, data any) Event {
@@ -119,5 +127,5 @@ func Result(cmd string, ok bool, data any) Event {
 	if !ok {
 		status = "failure"
 	}
-	return Event{V: 1, TS: NowTS(), Cmd: cmd, Type: "result", Level: "info", Data: map[string]any{"status": status, "data": data}}
+	return Event{V: EventSchemaVersion, TS: NowTS(), Cmd: cmd, Type: "result", Level: "info", Data: map[string]any{"status": status, "data": data}}
 }

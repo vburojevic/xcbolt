@@ -92,7 +92,7 @@ func TestLoadConfigRejectsLegacyVersion(t *testing.T) {
 	}
 }
 
-func TestSaveAndLoadConfigV2RoundTrip(t *testing.T) {
+func TestSaveAndLoadConfigV3RoundTrip(t *testing.T) {
 	root := t.TempDir()
 	cfg := DefaultConfig(root)
 	cfg.Scheme = "App"
@@ -123,5 +123,56 @@ func TestSaveAndLoadConfigV2RoundTrip(t *testing.T) {
 	}
 	if loaded.Destination.CompanionTargetID != "PHONE-UDID" {
 		t.Fatalf("companion target = %q", loaded.Destination.CompanionTargetID)
+	}
+}
+
+func TestMigrateConfigFromV2CreatesBackup(t *testing.T) {
+	root := t.TempDir()
+	if err := EnsureProjectDirs(root); err != nil {
+		t.Fatalf("EnsureProjectDirs: %v", err)
+	}
+	path := ConfigPath(root)
+	v2 := map[string]any{
+		"version":       2,
+		"scheme":        "App",
+		"configuration": "Debug",
+		"destination": map[string]any{
+			"kind":           "simulator",
+			"platformFamily": "ios",
+			"targetType":     "simulator",
+			"udid":           "SIM-1",
+		},
+	}
+	b, err := json.Marshal(v2)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	res, err := MigrateConfig(root, "")
+	if err != nil {
+		t.Fatalf("MigrateConfig: %v", err)
+	}
+	if res.FromVersion != 2 || res.ToVersion != ConfigVersion {
+		t.Fatalf("unexpected versions: %+v", res)
+	}
+	if res.BackupPath == "" {
+		t.Fatalf("expected backup path")
+	}
+	if _, err := os.Stat(res.BackupPath); err != nil {
+		t.Fatalf("backup missing: %v", err)
+	}
+
+	loaded, err := LoadConfig(root, "")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loaded.Version != ConfigVersion {
+		t.Fatalf("version = %d, want %d", loaded.Version, ConfigVersion)
+	}
+	if loaded.Destination.ID != "SIM-1" {
+		t.Fatalf("destination id = %q", loaded.Destination.ID)
 	}
 }

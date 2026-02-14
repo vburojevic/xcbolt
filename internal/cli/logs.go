@@ -10,8 +10,9 @@ import (
 
 func newLogsCmd() *cobra.Command {
 	var predicate string
-	var simulator string
-	var device string
+	var platform string
+	var target string
+	var targetType string
 
 	cmd := &cobra.Command{
 		Use:   "logs",
@@ -21,7 +22,7 @@ func newLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := applyOverrides(&ac.Config, "", "", simulator, device, "", "", "", "", ac.Emitter); err != nil {
+			if err := applyOverrides(&ac.Config, "", "", platform, target, targetType, ""); err != nil {
 				return err
 			}
 
@@ -29,9 +30,12 @@ func newLogsCmd() *cobra.Command {
 
 			switch ac.Config.Destination.Kind {
 			case core.DestSimulator:
-				udid := ac.Config.Destination.UDID
+				udid := ac.Config.Destination.ID
 				if udid == "" {
-					return errors.New("missing simulator udid (set in config or via --simulator)")
+					udid = ac.Config.Destination.UDID
+				}
+				if udid == "" {
+					return errors.New("missing simulator target id (set in config or pass --target)")
 				}
 				args := []string{"simctl", "spawn", udid, "log", "stream", "--style", "compact"}
 				if predicate != "" {
@@ -71,8 +75,9 @@ func newLogsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&predicate, "predicate", "", "log stream predicate (simulator only)")
-	cmd.Flags().StringVar(&simulator, "simulator", "", "Simulator UDID (sets destination kind)")
-	cmd.Flags().StringVar(&device, "device", "", "Device UDID (sets destination kind)")
+	cmd.Flags().StringVar(&platform, "platform", "", "Destination platform family (ios|ipados|tvos|visionos|watchos|macos|catalyst)")
+	cmd.Flags().StringVar(&target, "target", "", "Destination ID or exact name")
+	cmd.Flags().StringVar(&targetType, "target-type", "", "Destination target type (simulator|device|local)")
 
 	return cmd
 }

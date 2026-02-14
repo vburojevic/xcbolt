@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-const ConfigVersion = 2
+const ConfigVersion = 3
 
 type ConfigVersionError struct {
 	Path string
@@ -19,7 +20,7 @@ type ConfigVersionError struct {
 }
 
 func (e ConfigVersionError) Error() string {
-	return fmt.Sprintf("config version mismatch for %s: got v%d, expected v%d (run `xcbolt init` to regenerate config)", e.Path, e.Got, e.Want)
+	return fmt.Sprintf("config version mismatch for %s: got v%d, expected v%d (run `xcbolt config migrate` or `xcbolt init`)", e.Path, e.Got, e.Want)
 }
 
 type DestinationKind string
@@ -221,4 +222,108 @@ func SaveConfig(projectRoot string, overridePath string, cfg Config) error {
 	}
 	b = append(b, '\n')
 	return os.WriteFile(path, b, 0o644)
+}
+
+type ConfigMigrationResult struct {
+	Path        string `json:"path"`
+	BackupPath  string `json:"backupPath,omitempty"`
+	FromVersion int    `json:"fromVersion"`
+	ToVersion   int    `json:"toVersion"`
+}
+
+func MigrateConfig(projectRoot string, overridePath string) (ConfigMigrationResult, error) {
+	path := overridePath
+	if path == "" {
+		path = ConfigPath(projectRoot)
+	}
+
+	if err := EnsureProjectDirs(projectRoot); err != nil {
+		return ConfigMigrationResult{}, err
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			cfg := DefaultConfig(projectRoot)
+			if err := SaveConfig(projectRoot, overridePath, cfg); err != nil {
+				return ConfigMigrationResult{}, err
+			}
+			return ConfigMigrationResult{
+				Path:        path,
+				FromVersion: 0,
+				ToVersion:   ConfigVersion,
+			}, nil
+		}
+		return ConfigMigrationResult{}, err
+	}
+
+	fromVersion := extractConfigVersion(b)
+
+	cfg := DefaultConfig(projectRoot)
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return ConfigMigrationResult{}, fmt.Errorf("failed to parse config %s: %w", path, err)
+	}
+	// Preserve legacy configs that omitted version or used older versions.
+	if cfg.DerivedDataPath == "" {
+		cfg.DerivedDataPath = filepath.Join(projectRoot, ".xcbolt", "DerivedData")
+	}
+	if cfg.ResultBundlesPath == "" {
+		cfg.ResultBundlesPath = filepath.Join(projectRoot, ".xcbolt", "Results")
+	}
+	if cfg.Xcodebuild.Env == nil {
+		cfg.Xcodebuild.Env = map[string]string{}
+	}
+	if cfg.Xcodebuild.LogFormat == "" {
+		cfg.Xcodebuild.LogFormat = "auto"
+	}
+	if cfg.Launch.Env == nil {
+		cfg.Launch.Env = map[string]string{}
+	}
+	syncDestinationLegacy(&cfg.Destination)
+
+	var backupPath string
+	if fromVersion != ConfigVersion {
+		backupPath = migrationBackupPath(path, fromVersion)
+		if err := os.WriteFile(backupPath, b, 0o644); err != nil {
+			return ConfigMigrationResult{}, err
+		}
+	}
+
+	if err := SaveConfig(projectRoot, overridePath, cfg); err != nil {
+		return ConfigMigrationResult{}, err
+	}
+	return ConfigMigrationResult{
+		Path:        path,
+		BackupPath:  backupPath,
+		FromVersion: fromVersion,
+		ToVersion:   ConfigVersion,
+	}, nil
+}
+
+func extractConfigVersion(b []byte) int {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return 0
+	}
+	v, ok := raw["version"]
+	if !ok {
+		return 0
+	}
+	switch vv := v.(type) {
+	case float64:
+		return int(vv)
+	case int:
+		return vv
+	default:
+		return 0
+	}
+}
+
+func migrationBackupPath(path string, fromVersion int) string {
+	base := fmt.Sprintf("%s.v%d.backup", path, fromVersion)
+	if _, err := os.Stat(base); errors.Is(err, os.ErrNotExist) {
+		return base
+	}
+	ts := time.Now().UTC().Format("20060102-150405")
+	return fmt.Sprintf("%s.%s", base, ts)
 }

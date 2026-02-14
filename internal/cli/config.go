@@ -13,6 +13,7 @@ import (
 
 func newConfigCmd() *cobra.Command {
 	var edit bool
+	var migrate bool
 
 	cmd := &cobra.Command{
 		Use:   "config",
@@ -20,7 +21,47 @@ func newConfigCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ac, err := NewAppContext(flags)
 			if err != nil {
-				return err
+				if !migrate {
+					return err
+				}
+				root, rerr := resolveProjectRoot(flags.Project)
+				if rerr != nil {
+					return err
+				}
+				cfgPath := flags.Config
+				if cfgPath == "" {
+					cfgPath = core.ConfigPath(root)
+				}
+				emit := core.Emitter(core.NewTextEmitter(cmd.OutOrStdout()))
+				if flags.JSON {
+					if flags.EventVersion != core.EventSchemaVersion {
+						return fmt.Errorf("unsupported --event-version %d (supported: %d)", flags.EventVersion, core.EventSchemaVersion)
+					}
+					emit = core.NewNDJSONEmitter(cmd.OutOrStdout(), flags.EventVersion)
+				}
+				ac = AppContext{
+					ProjectRoot: root,
+					ConfigPath:  cfgPath,
+					Emitter:     emit,
+					Flags:       flags,
+				}
+			}
+
+			if migrate {
+				res, err := core.MigrateConfig(ac.ProjectRoot, ac.ConfigPath)
+				if err != nil {
+					return err
+				}
+				if ac.Flags.JSON {
+					ac.Emitter.Emit(core.Event{Cmd: "config", Type: "config_migrated", Data: res})
+					return nil
+				}
+				if res.BackupPath != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "Migrated config from v%d to v%d: %s (backup: %s)\n", res.FromVersion, res.ToVersion, res.Path, res.BackupPath)
+				} else {
+					fmt.Fprintf(cmd.OutOrStdout(), "Config already at v%d: %s\n", res.ToVersion, res.Path)
+				}
+				return nil
 			}
 
 			if edit {
@@ -45,5 +86,6 @@ func newConfigCmd() *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&edit, "edit", false, "Open config in $EDITOR")
+	cmd.Flags().BoolVar(&migrate, "migrate", false, "Migrate config to the latest schema version")
 	return cmd
 }

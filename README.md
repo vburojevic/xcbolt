@@ -167,6 +167,8 @@ xcbolt --json build
 xcbolt --json test | jq '.type'
 ```
 
+`--event-version` controls the schema version for NDJSON output (current: `2`).
+
 **Event types emitted:**
 
 | Type | Description |
@@ -228,18 +230,16 @@ Running `xcbolt init` creates `.xcbolt/config.json`:
 --companion-target <destination-id-or-name>   # watchOS physical runs
 ```
 
-Legacy flags `--simulator` and `--device` still work but are deprecated.
-
 ### Config Migration
 
-`xcbolt` now expects `.xcbolt/config.json` schema version `2`.
-If you still have a v1 config, run:
+`xcbolt` now expects `.xcbolt/config.json` schema version `3`.
+If you still have an older config, run:
 
 ```bash
-xcbolt init
+xcbolt config --migrate
 ```
 
-to regenerate it.
+to migrate it in place (a backup is written automatically).
 
 ---
 
@@ -282,7 +282,7 @@ xcbolt/
 **Building:**
 ```bash
 xcbolt --json build          # Structured output
-# Parse NDJSON: {"type": "log"|"error"|"result", "msg": "..."}
+# Parse NDJSON: {"type": "log"|"error"|"result", "message": "..."}
 # Exit code: 0 = success, non-zero = failure
 ```
 
@@ -310,9 +310,18 @@ xcbolt simulator shutdown <udid>
 
 ```typescript
 interface Event {
+  version: number;
+  timestamp: string;
+  command: string;
   type: "log" | "error" | "warning" | "result" | "status";
-  msg: string;
-  err?: string;    // Present on error events
+  message?: string;
+  level?: "info" | "warn" | "error";
+  error?: {
+    code: string;
+    message: string;
+    detail?: string;
+    suggestion?: string;
+  };
   data?: object;   // Present on result events
 }
 ```

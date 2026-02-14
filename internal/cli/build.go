@@ -12,8 +12,6 @@ import (
 func newBuildCmd() *cobra.Command {
 	var scheme string
 	var configuration string
-	var simulator string
-	var device string
 	var platform string
 	var target string
 	var targetType string
@@ -27,7 +25,7 @@ func newBuildCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := applyOverrides(&ac.Config, scheme, configuration, simulator, device, platform, target, targetType, companionTarget, ac.Emitter); err != nil {
+			if err := applyOverrides(&ac.Config, scheme, configuration, platform, target, targetType, companionTarget); err != nil {
 				return err
 			}
 
@@ -42,8 +40,6 @@ func newBuildCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&scheme, "scheme", "", "Override scheme")
 	cmd.Flags().StringVar(&configuration, "configuration", "", "Override configuration (Debug/Release/...)")
-	cmd.Flags().StringVar(&simulator, "simulator", "", "Simulator UDID (sets destination kind to simulator)")
-	cmd.Flags().StringVar(&device, "device", "", "Device UDID (sets destination kind to device)")
 	cmd.Flags().StringVar(&platform, "platform", "", "Destination platform family (ios|ipados|tvos|visionos|watchos|macos|catalyst)")
 	cmd.Flags().StringVar(&target, "target", "", "Destination ID or exact name")
 	cmd.Flags().StringVar(&targetType, "target-type", "", "Destination target type (simulator|device|local)")
@@ -52,33 +48,12 @@ func newBuildCmd() *cobra.Command {
 	return cmd
 }
 
-func applyOverrides(cfg *core.Config, scheme, configuration, simulator, device, platform, target, targetType, companionTarget string, emit core.Emitter) error {
+func applyOverrides(cfg *core.Config, scheme, configuration, platform, target, targetType, companionTarget string) error {
 	if scheme != "" {
 		cfg.Scheme = scheme
 	}
 	if configuration != "" {
 		cfg.Configuration = configuration
-	}
-
-	if (simulator != "" || device != "") && (platform != "" || target != "" || targetType != "") {
-		return fmt.Errorf("cannot combine --simulator/--device with --platform/--target/--target-type")
-	}
-
-	if simulator != "" {
-		cfg.Destination.Kind = core.DestSimulator
-		cfg.Destination.TargetType = core.TargetSimulator
-		cfg.Destination.PlatformFamily = core.PlatformIOS
-		cfg.Destination.UDID = simulator
-		cfg.Destination.ID = simulator
-		cfg.Destination.Platform = "iOS Simulator"
-	}
-	if device != "" {
-		cfg.Destination.Kind = core.DestDevice
-		cfg.Destination.TargetType = core.TargetDevice
-		cfg.Destination.PlatformFamily = core.PlatformIOS
-		cfg.Destination.UDID = device
-		cfg.Destination.ID = device
-		cfg.Destination.Platform = "iOS"
 	}
 	if platform != "" {
 		pf := core.NormalizePlatformFamily(platform)
@@ -93,6 +68,12 @@ func applyOverrides(cfg *core.Config, scheme, configuration, simulator, device, 
 			return fmt.Errorf("unknown --target-type value %q", targetType)
 		}
 		cfg.Destination.TargetType = tt
+		switch tt {
+		case core.TargetSimulator:
+			cfg.Destination.Kind = core.DestSimulator
+		case core.TargetDevice:
+			cfg.Destination.Kind = core.DestDevice
+		}
 	}
 	if target != "" {
 		target = strings.TrimSpace(target)
@@ -119,10 +100,6 @@ func applyOverrides(cfg *core.Config, scheme, configuration, simulator, device, 
 		cfg.Destination.UDID = ""
 		cfg.Destination.Platform = "macOS"
 		cfg.Destination.OS = "macOS"
-	}
-
-	if (simulator != "" || device != "") && emit != nil {
-		emit.Emit(core.Warn("config", "--simulator/--device are deprecated; use --platform + --target + --target-type"))
 	}
 	return nil
 }

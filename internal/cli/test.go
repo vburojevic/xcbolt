@@ -12,8 +12,6 @@ import (
 func newTestCmd() *cobra.Command {
 	var scheme string
 	var configuration string
-	var simulator string
-	var device string
 	var platform string
 	var target string
 	var targetType string
@@ -30,7 +28,7 @@ func newTestCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := applyOverrides(&ac.Config, scheme, configuration, simulator, device, platform, target, targetType, companionTarget, ac.Emitter); err != nil {
+			if err := applyOverrides(&ac.Config, scheme, configuration, platform, target, targetType, companionTarget); err != nil {
 				return err
 			}
 
@@ -62,8 +60,6 @@ func newTestCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&skip, "skip", []string{}, "Skip these tests (repeatable)")
 	cmd.Flags().StringVar(&scheme, "scheme", "", "Override scheme")
 	cmd.Flags().StringVar(&configuration, "configuration", "", "Override configuration")
-	cmd.Flags().StringVar(&simulator, "simulator", "", "Simulator UDID")
-	cmd.Flags().StringVar(&device, "device", "", "Device UDID")
 	cmd.Flags().StringVar(&platform, "platform", "", "Destination platform family (ios|ipados|tvos|visionos|watchos|macos|catalyst)")
 	cmd.Flags().StringVar(&target, "target", "", "Destination ID or exact name")
 	cmd.Flags().StringVar(&targetType, "target-type", "", "Destination target type (simulator|device|local)")

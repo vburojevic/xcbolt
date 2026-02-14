@@ -243,7 +243,7 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 			Code:       "DESTINATION_REQUIRED",
 			Message:    "No destination configured",
 			Detail:     err.Error(),
-			Suggestion: "Pick a destination in TUI (d) or pass --simulator/--device.",
+			Suggestion: "Pick a destination in TUI (d) or pass --platform + --target + --target-type.",
 		}))
 		return RunResult{}, cfg, err
 	}

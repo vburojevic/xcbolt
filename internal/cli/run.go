@@ -10,8 +10,6 @@ import (
 func newRunCmd() *cobra.Command {
 	var scheme string
 	var configuration string
-	var simulator string
-	var device string
 	var platform string
 	var target string
 	var targetType string
@@ -26,7 +24,7 @@ func newRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := applyOverrides(&ac.Config, scheme, configuration, simulator, device, platform, target, targetType, companionTarget, ac.Emitter); err != nil {
+			if err := applyOverrides(&ac.Config, scheme, configuration, platform, target, targetType, companionTarget); err != nil {
 				return err
 			}
 
@@ -42,8 +40,6 @@ func newRunCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&scheme, "scheme", "", "Override scheme")
 	cmd.Flags().StringVar(&configuration, "configuration", "", "Override configuration")
-	cmd.Flags().StringVar(&simulator, "simulator", "", "Simulator UDID")
-	cmd.Flags().StringVar(&device, "device", "", "Device UDID")
 	cmd.Flags().StringVar(&platform, "platform", "", "Destination platform family (ios|ipados|tvos|visionos|watchos|macos|catalyst)")
 	cmd.Flags().StringVar(&target, "target", "", "Destination ID or exact name")
 	cmd.Flags().StringVar(&targetType, "target-type", "", "Destination target type (simulator|device|local)")

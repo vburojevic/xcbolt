@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/xcbolt/xcbolt/internal/core"
 	"github.com/xcbolt/xcbolt/internal/tui"
 )
 
@@ -37,6 +38,7 @@ func Execute() {
 	rootCmd.SetErr(os.Stderr)
 
 	rootCmd.PersistentFlags().BoolVar(&flags.JSON, "json", false, "Emit NDJSON event stream to stdout")
+	rootCmd.PersistentFlags().IntVar(&flags.EventVersion, "event-version", core.EventSchemaVersion, "NDJSON event schema version")
 	rootCmd.PersistentFlags().StringVar(&flags.Config, "config", "", "Path to config file (default: .xcbolt/config.json)")
 	rootCmd.PersistentFlags().StringVar(&flags.Project, "project", "", "Project directory (default: auto-detected)")
 	rootCmd.PersistentFlags().BoolVar(&flags.Verbose, "verbose", false, "Verbose output")

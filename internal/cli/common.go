@@ -10,6 +10,7 @@ import (
 
 type GlobalFlags struct {
 	JSON              bool
+	EventVersion      int
 	Config            string
 	Project           string
 	Verbose           bool
@@ -55,7 +56,10 @@ func NewAppContext(flags GlobalFlags) (AppContext, error) {
 	}
 	emit := core.Emitter(core.NewTextEmitter(os.Stdout))
 	if flags.JSON {
-		emit = core.NewNDJSONEmitter(os.Stdout)
+		if flags.EventVersion != core.EventSchemaVersion {
+			return AppContext{}, fmt.Errorf("unsupported --event-version %d (supported: %d)", flags.EventVersion, core.EventSchemaVersion)
+		}
+		emit = core.NewNDJSONEmitter(os.Stdout, flags.EventVersion)
 	}
 	cfgPath := flags.Config
 	if cfgPath == "" {

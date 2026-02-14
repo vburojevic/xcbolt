@@ -36,7 +36,10 @@ func newInitCmd() *cobra.Command {
 				}
 				emit := core.Emitter(core.NewTextEmitter(cmd.OutOrStdout()))
 				if flags.JSON {
-					emit = core.NewNDJSONEmitter(cmd.OutOrStdout())
+					if flags.EventVersion != core.EventSchemaVersion {
+						return fmt.Errorf("unsupported --event-version %d (supported: %d)", flags.EventVersion, core.EventSchemaVersion)
+					}
+					emit = core.NewNDJSONEmitter(cmd.OutOrStdout(), flags.EventVersion)
 				}
 				var verr core.ConfigVersionError
 				if errors.As(err, &verr) {

@@ -6,17 +6,9 @@ import (
 	"github.com/xcbolt/xcbolt/internal/core"
 )
 
-func TestApplyOverridesConflictLegacyAndNewFlags(t *testing.T) {
-	cfg := core.Config{}
-	err := applyOverrides(&cfg, "", "", "SIM", "", "ios", "SIM", "simulator", "", nil)
-	if err == nil {
-		t.Fatalf("expected conflict error")
-	}
-}
-
 func TestApplyOverridesUnknownPlatform(t *testing.T) {
 	cfg := core.Config{}
-	err := applyOverrides(&cfg, "", "", "", "", "not-a-platform", "", "", "", nil)
+	err := applyOverrides(&cfg, "", "", "not-a-platform", "", "", "")
 	if err == nil {
 		t.Fatalf("expected unknown platform error")
 	}
@@ -24,7 +16,7 @@ func TestApplyOverridesUnknownPlatform(t *testing.T) {
 
 func TestApplyOverridesUnknownTargetType(t *testing.T) {
 	cfg := core.Config{}
-	err := applyOverrides(&cfg, "", "", "", "", "", "", "bad", "", nil)
+	err := applyOverrides(&cfg, "", "", "", "", "bad", "")
 	if err == nil {
 		t.Fatalf("expected unknown target type error")
 	}
@@ -32,7 +24,7 @@ func TestApplyOverridesUnknownTargetType(t *testing.T) {
 
 func TestApplyOverridesLocalMac(t *testing.T) {
 	cfg := core.Config{}
-	err := applyOverrides(&cfg, "App", "Debug", "", "", "macos", "", "local", "", nil)
+	err := applyOverrides(&cfg, "App", "Debug", "macos", "", "local", "")
 	if err != nil {
 		t.Fatalf("applyOverrides: %v", err)
 	}
@@ -49,7 +41,7 @@ func TestApplyOverridesLocalMac(t *testing.T) {
 
 func TestApplyOverridesWatchCompanion(t *testing.T) {
 	cfg := core.Config{}
-	err := applyOverrides(&cfg, "", "", "", "", "watchos", "WATCH-UDID", "device", "PHONE-UDID", nil)
+	err := applyOverrides(&cfg, "", "", "watchos", "WATCH-UDID", "device", "PHONE-UDID")
 	if err != nil {
 		t.Fatalf("applyOverrides: %v", err)
 	}
@@ -67,14 +59,20 @@ func TestApplyOverridesWatchCompanion(t *testing.T) {
 	}
 }
 
-func TestApplyOverridesLegacySimulator(t *testing.T) {
+func TestApplyOverridesSimulatorTarget(t *testing.T) {
 	cfg := core.Config{}
-	err := applyOverrides(&cfg, "", "", "SIM-UDID", "", "", "", "", "", nil)
+	err := applyOverrides(&cfg, "", "", "ios", "SIM-UDID", "simulator", "")
 	if err != nil {
 		t.Fatalf("applyOverrides: %v", err)
 	}
-	if cfg.Destination.Kind != core.DestSimulator || cfg.Destination.TargetType != core.TargetSimulator {
-		t.Fatalf("destination not simulator: %+v", cfg.Destination)
+	if cfg.Destination.TargetType != core.TargetSimulator {
+		t.Fatalf("target type = %q", cfg.Destination.TargetType)
+	}
+	if cfg.Destination.Kind != core.DestSimulator {
+		t.Fatalf("kind = %q", cfg.Destination.Kind)
+	}
+	if cfg.Destination.PlatformFamily != core.PlatformIOS {
+		t.Fatalf("platform family = %q", cfg.Destination.PlatformFamily)
 	}
 	if cfg.Destination.ID != "SIM-UDID" || cfg.Destination.UDID != "SIM-UDID" {
 		t.Fatalf("id/udid mismatch: %+v", cfg.Destination)

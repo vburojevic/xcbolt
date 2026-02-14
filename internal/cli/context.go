@@ -33,7 +33,7 @@ func newContextCmd() *cobra.Command {
 			ac.Config = cfg
 
 			if ac.Flags.JSON {
-				ac.Emitter.Emit(core.Event{V: 1, TS: core.NowTS(), Cmd: "context", Type: "context", Data: info})
+				ac.Emitter.Emit(core.Event{V: core.EventSchemaVersion, TS: core.NowTS(), Cmd: "context", Type: "context", Data: info})
 				return nil
 			}
 

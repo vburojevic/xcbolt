@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  test-linux:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -23,13 +23,47 @@ jobs:
           go-version-file: go.mod
 
       - name: Run tests
-        run: go test ./...
+        run: go test -race ./...
 
-      - name: Enforce core coverage
+      - name: Enforce package coverage
         run: |
           go test ./internal/core -coverprofile=core.cover
-          COV=$(go tool cover -func=core.cover | awk '/^total:/{gsub("%", "", $3); print $3}')
-          echo "internal/core coverage: ${COV}%"
-          MIN=20
-          awk -v cov="$COV" -v min="$MIN" 'BEGIN { if (cov+0 < min+0) exit 1 }'
-          echo "Coverage gate passed (>= ${MIN}%)"
+          go test ./internal/cli -coverprofile=cli.cover
+          go test ./internal/tui -coverprofile=tui.cover
+
+          CORE_COV=$(go tool cover -func=core.cover | awk '/^total:/{gsub("%", "", $3); print $3}')
+          CLI_COV=$(go tool cover -func=cli.cover | awk '/^total:/{gsub("%", "", $3); print $3}')
+          TUI_COV=$(go tool cover -func=tui.cover | awk '/^total:/{gsub("%", "", $3); print $3}')
+
+          echo "internal/core coverage: ${CORE_COV}%"
+          echo "internal/cli coverage: ${CLI_COV}%"
+          echo "internal/tui coverage: ${TUI_COV}%"
+
+          awk -v cov="$CORE_COV" -v min="20" 'BEGIN { if (cov+0 < min+0) exit 1 }'
+          awk -v cov="$CLI_COV" -v min="4" 'BEGIN { if (cov+0 < min+0) exit 1 }'
+          awk -v cov="$TUI_COV" -v min="6" 'BEGIN { if (cov+0 < min+0) exit 1 }'
+
+          echo "Coverage gates passed."
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test -race ./...
+
+      - name: Build CLI
+        run: go build -o xcbolt ./cmd/xcbolt
+
+      - name: Smoke test CLI
+        run: |
+          ./xcbolt --help >/dev/null
+          ./xcbolt --json context >/dev/null
+          ./xcbolt --json doctor >/dev/null
