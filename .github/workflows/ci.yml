@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Enforce core coverage
+        run: |
+          go test ./internal/core -coverprofile=core.cover
+          COV=$(go tool cover -func=core.cover | awk '/^total:/{gsub("%", "", $3); print $3}')
+          echo "internal/core coverage: ${COV}%"
+          MIN=20
+          awk -v cov="$COV" -v min="$MIN" 'BEGIN { if (cov+0 < min+0) exit 1 }'
+          echo "Coverage gate passed (>= ${MIN}%)"

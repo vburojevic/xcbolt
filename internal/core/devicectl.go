@@ -11,11 +11,14 @@ import (
 )
 
 type Device struct {
-	Name       string `json:"name"`
-	Identifier string `json:"identifier"`
-	Platform   string `json:"platform,omitempty"`
-	OSVersion  string `json:"osVersion,omitempty"`
-	Model      string `json:"model,omitempty"`
+	Name           string         `json:"name"`
+	Identifier     string         `json:"identifier"`
+	Platform       string         `json:"platform,omitempty"`
+	OSVersion      string         `json:"osVersion,omitempty"`
+	Model          string         `json:"model,omitempty"`
+	PlatformFamily PlatformFamily `json:"platformFamily,omitempty"`
+	PairedDeviceID string         `json:"pairedDeviceId,omitempty"`
+	CompanionAppID string         `json:"companionAppId,omitempty"`
 }
 
 func DevicectlList(ctx context.Context, emit Emitter) ([]Device, error) {
@@ -274,7 +277,16 @@ func extractDevices(v any) []Device {
 				key := id + "|" + name
 				if !seen[key] {
 					seen[key] = true
-					devs = append(devs, Device{Name: name, Identifier: id, Platform: platform, OSVersion: osv, Model: model})
+					devs = append(devs, Device{
+						Name:           name,
+						Identifier:     id,
+						Platform:       platform,
+						OSVersion:      osv,
+						Model:          model,
+						PlatformFamily: InferPlatformFamilyFromDevice(platform, model, name),
+						PairedDeviceID: firstString(t, []string{"pairedDeviceIdentifier", "pairedDeviceId", "pairedDeviceUDID"}),
+						CompanionAppID: firstString(t, []string{"companionBundleIdentifier", "companionAppBundleIdentifier"}),
+					})
 				}
 			}
 

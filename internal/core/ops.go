@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -65,6 +65,7 @@ func Build(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (B
 	}
 
 	cfg, _ = ResolveDestinationIfNeeded(ctx, projectRoot, cfg, emit)
+	cfg.Destination = normalizeDestination(cfg.Destination)
 
 	if err := EnsureBuildDirs(cfg); err != nil {
 		return BuildResult{}, cfg, err
@@ -148,6 +149,7 @@ func Test(ctx context.Context, projectRoot string, cfg Config, onlyTesting []str
 	}
 
 	cfg, _ = ResolveDestinationIfNeeded(ctx, projectRoot, cfg, emit)
+	cfg.Destination = normalizeDestination(cfg.Destination)
 
 	if err := EnsureBuildDirs(cfg); err != nil {
 		return TestResult{}, cfg, err
@@ -234,6 +236,7 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		}))
 		return RunResult{}, cfg, err
 	}
+	cfg.Destination = normalizeDestination(cfg.Destination)
 	if cfg.Destination.Kind == DestAuto {
 		err := errors.New("destination is still auto; unable to determine target")
 		emitMaybe(emit, Err("run", ErrorObject{
@@ -244,6 +247,7 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		}))
 		return RunResult{}, cfg, err
 	}
+	emitMaybe(emit, Status("run", "Resolved destination", destinationMetadata(cfg.Destination)))
 	if cfg.Xcodebuild.DryRun {
 		args := baseXcodebuildArgs(projectRoot, cfg)
 		args = append(args,
@@ -326,6 +330,17 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 	}
 
 	launchEnv := consoleLaunchEnv(cfg, console)
+
+	if cfg.Destination.PlatformFamily == PlatformWatchOS && cfg.Destination.Kind == DestDevice && strings.TrimSpace(cfg.Destination.CompanionTargetID) == "" {
+		err := errors.New("watchOS physical runs require a paired companion target")
+		emitMaybe(emit, Err("run", ErrorObject{
+			Code:       "WATCH_COMPANION_REQUIRED",
+			Message:    "Companion target required for watchOS device runs",
+			Detail:     err.Error(),
+			Suggestion: "Run with --companion-target <paired-iphone-udid-or-name>.",
+		}))
+		return RunResult{}, cfg, err
+	}
 
 	switch cfg.Destination.Kind {
 	case DestSimulator:
@@ -424,7 +439,10 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		if pid == 0 {
 			pid = parseFirstInt(out.String())
 		}
-		_, _ = AddSession(projectRoot, appInfo.BundleID, pid, "simulator", udid)
+		dst := cfg.Destination
+		dst.ID = udid
+		dst.UDID = udid
+		_, _ = AddSessionWithDestination(projectRoot, appInfo.BundleID, pid, dst)
 		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: pid, Target: "simulator", UDID: udid}, cfg, nil
@@ -433,6 +451,65 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 		udid := cfg.Destination.UDID
 		if udid == "" {
 			return RunResult{}, cfg, errors.New("missing device udid")
+		}
+		if cfg.Destination.PlatformFamily == PlatformWatchOS {
+			watchDeploy, err := resolveWatchDeviceDeployment(ctx, cfg.Destination, appPath, appInfo, emit)
+			if err != nil {
+				emitMaybe(emit, Err("run", ErrorObject{
+					Code:       "WATCH_DEPLOYMENT_FAILED",
+					Message:    "Failed to prepare watchOS companion deployment",
+					Detail:     err.Error(),
+					Suggestion: "Provide --companion-target and ensure build outputs both iPhone and Watch .app bundles.",
+				}))
+				return RunResult{}, cfg, err
+			}
+			cfg.Destination.CompanionTargetID = watchDeploy.CompanionDeviceID
+
+			emitMaybe(emit, Status("run", "Installing companion app on paired iPhone", map[string]any{
+				"companionDevice": watchDeploy.CompanionDeviceID,
+				"app":             watchDeploy.CompanionAppPath,
+			}))
+			if err := DevicectlInstallApp(ctx, watchDeploy.CompanionDeviceID, watchDeploy.CompanionAppPath, emit); err != nil {
+				emitMaybe(emit, Err("run", ErrorObject{
+					Code:       "WATCH_COMPANION_INSTALL_FAILED",
+					Message:    "Failed to install companion app on paired iPhone",
+					Detail:     err.Error(),
+					Suggestion: "Ensure paired iPhone is connected/unlocked and signing is valid.",
+				}))
+				return RunResult{}, cfg, err
+			}
+
+			emitMaybe(emit, Status("run", "Installing watch app on device", map[string]any{"udid": udid, "app": watchDeploy.WatchAppPath}))
+			if err := DevicectlInstallApp(ctx, udid, watchDeploy.WatchAppPath, emit); err != nil {
+				emitMaybe(emit, Err("run", ErrorObject{
+					Code:       "WATCH_INSTALL_FAILED",
+					Message:    "Failed to install watch app on watch device",
+					Detail:     err.Error(),
+					Suggestion: "Verify the watch target bundle is built and the watch is paired/unlocked.",
+				}))
+				return RunResult{}, cfg, err
+			}
+
+			emitMaybe(emit, Status("run", "Launching watch app on device", map[string]any{"bundleId": watchDeploy.WatchInfo.BundleID, "console": console}))
+			lr, err := DevicectlLaunchApp(ctx, udid, watchDeploy.WatchInfo.BundleID, console, launchEnv, watchDeploy.WatchInfo, !shouldStreamSystemLogs(cfg), emit)
+			if err != nil {
+				emitMaybe(emit, Err("run", ErrorObject{
+					Code:       "WATCH_LAUNCH_FAILED",
+					Message:    "Failed to launch watch app on device",
+					Detail:     err.Error(),
+					Suggestion: "Check watch device connectivity and companion installation state.",
+				}))
+				return RunResult{}, cfg, err
+			}
+			dst := cfg.Destination
+			dst.ID = udid
+			dst.UDID = udid
+			dst.CompanionTargetID = watchDeploy.CompanionDeviceID
+			dst.CompanionBundleID = watchDeploy.CompanionInfo.BundleID
+			_, _ = AddSessionWithDestination(projectRoot, watchDeploy.WatchInfo.BundleID, lr.PID, dst)
+			emitMaybe(emit, Status("run", "Running", map[string]any{"pid": lr.PID, "bundleId": watchDeploy.WatchInfo.BundleID}))
+			emitMaybe(emit, Result("run", true, map[string]any{"pid": lr.PID, "bundleId": watchDeploy.WatchInfo.BundleID, "companionTargetId": watchDeploy.CompanionDeviceID}))
+			return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: watchDeploy.WatchAppPath, BundleID: watchDeploy.WatchInfo.BundleID, PID: lr.PID, Target: "device", UDID: udid}, cfg, nil
 		}
 		emitMaybe(emit, Status("run", "Installing app on device", map[string]any{"udid": udid}))
 		if err := DevicectlInstallApp(ctx, udid, appPath, emit); err != nil {
@@ -455,7 +532,10 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 			}))
 			return RunResult{}, cfg, err
 		}
-		_, _ = AddSession(projectRoot, appInfo.BundleID, lr.PID, "device", udid)
+		dst := cfg.Destination
+		dst.ID = udid
+		dst.UDID = udid
+		_, _ = AddSessionWithDestination(projectRoot, appInfo.BundleID, lr.PID, dst)
 		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": lr.PID, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": lr.PID, "bundleId": appInfo.BundleID}))
 		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: lr.PID, Target: "device", UDID: udid}, cfg, nil
@@ -499,7 +579,7 @@ func Run(ctx context.Context, projectRoot string, cfg Config, console bool, emit
 			pid = cmd.Process.Pid
 			_ = cmd.Process.Release()
 		}
-		_, _ = AddSession(projectRoot, appInfo.BundleID, pid, string(cfg.Destination.Kind), "")
+		_, _ = AddSessionWithDestination(projectRoot, appInfo.BundleID, pid, cfg.Destination)
 		emitMaybe(emit, Status("run", "Running", map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		emitMaybe(emit, Result("run", true, map[string]any{"pid": pid, "bundleId": appInfo.BundleID}))
 		return RunResult{ResultBundle: cfg.LastResultBundle, AppPath: appPath, BundleID: appInfo.BundleID, PID: pid, Target: string(cfg.Destination.Kind)}, cfg, nil
@@ -768,54 +848,208 @@ func guessAppBundlePath(settings BuildSettings) (string, error) {
 	return filepath.Join(buildDir, name), nil
 }
 
-func ResolveDestinationIfNeeded(ctx context.Context, projectRoot string, cfg Config, emit Emitter) (Config, error) {
-	if cfg.Destination.Kind != DestAuto {
-		return cfg, nil
+type watchDeviceDeployment struct {
+	CompanionDeviceID string
+	CompanionAppPath  string
+	CompanionInfo     AppBundleInfo
+	WatchAppPath      string
+	WatchInfo         AppBundleInfo
+}
+
+var resolveCompanionDeviceIDForWatch = resolveCompanionDeviceID
+
+func resolveWatchDeviceDeployment(ctx context.Context, dst Destination, builtAppPath string, builtInfo AppBundleInfo, emit Emitter) (watchDeviceDeployment, error) {
+	companionTarget := strings.TrimSpace(dst.CompanionTargetID)
+	if companionTarget == "" {
+		return watchDeviceDeployment{}, errors.New("missing companion target")
+	}
+	companionDeviceID, err := resolveCompanionDeviceIDForWatch(ctx, companionTarget, emit)
+	if err != nil {
+		return watchDeviceDeployment{}, err
 	}
 
-	list, err := SimctlList(ctx, emit)
-	if err != nil {
-		return cfg, err
+	companionAppPath := builtAppPath
+	companionInfo := builtInfo
+	watchAppPath := builtAppPath
+	watchInfo := builtInfo
+
+	if builtInfo.IsWatchApp {
+		watchAppPath = builtAppPath
+		watchInfo = builtInfo
+		companionAppPath, companionInfo, err = findCompanionAppNearWatch(builtAppPath, builtInfo.CompanionBundleID)
+		if err != nil {
+			return watchDeviceDeployment{}, err
+		}
+	} else {
+		companionAppPath = builtAppPath
+		companionInfo = builtInfo
+		watchAppPath, watchInfo, err = findWatchAppForCompanion(companionAppPath, companionInfo.BundleID)
+		if err != nil {
+			return watchDeviceDeployment{}, err
+		}
 	}
-	sims := FlattenSimulators(list)
-	// Prefer booted available iOS simulators; else newest iOS available.
-	booted := []Simulator{}
-	avail := []Simulator{}
-	for _, s := range sims {
-		if !s.Available {
+
+	if watchInfo.BundleID == "" {
+		return watchDeviceDeployment{}, errors.New("watch app bundle id is missing")
+	}
+	if companionInfo.BundleID == "" {
+		return watchDeviceDeployment{}, errors.New("companion app bundle id is missing")
+	}
+	if watchInfo.CompanionBundleID != "" && watchInfo.CompanionBundleID != companionInfo.BundleID {
+		return watchDeviceDeployment{}, fmt.Errorf("watch app companion id %q does not match selected companion %q", watchInfo.CompanionBundleID, companionInfo.BundleID)
+	}
+
+	return watchDeviceDeployment{
+		CompanionDeviceID: companionDeviceID,
+		CompanionAppPath:  companionAppPath,
+		CompanionInfo:     companionInfo,
+		WatchAppPath:      watchAppPath,
+		WatchInfo:         watchInfo,
+	}, nil
+}
+
+func resolveCompanionDeviceID(ctx context.Context, target string, emit Emitter) (string, error) {
+	candidates, err := ListDestinationCandidates(ctx, emit)
+	if err != nil {
+		return "", err
+	}
+	matches := []DestinationCandidate{}
+	for _, c := range candidates {
+		if c.TargetType != TargetDevice {
 			continue
 		}
-		if strings.Contains(strings.ToLower(s.RuntimeName), "ios") {
-			avail = append(avail, s)
-			if strings.ToLower(s.State) == "booted" {
-				booted = append(booted, s)
+		if c.PlatformFamily != PlatformIOS && c.PlatformFamily != PlatformIPadOS {
+			continue
+		}
+		if strings.EqualFold(c.ID, target) || strings.EqualFold(c.Name, target) {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) == 0 {
+		return "", fmt.Errorf("companion target %q not found among connected iPhone/iPad devices", target)
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, m := range matches {
+			names = append(names, m.Name+" ("+m.ID+")")
+		}
+		return "", fmt.Errorf("companion target %q is ambiguous: %s", target, strings.Join(names, ", "))
+	}
+	return matches[0].ID, nil
+}
+
+func findCompanionAppNearWatch(watchAppPath, companionBundleID string) (string, AppBundleInfo, error) {
+	buildDir := filepath.Dir(watchAppPath)
+	paths, err := discoverAppBundles(buildDir, 4)
+	if err != nil {
+		return "", AppBundleInfo{}, err
+	}
+	candidates := []struct {
+		path string
+		info AppBundleInfo
+	}{}
+	for _, p := range paths {
+		if p == watchAppPath {
+			continue
+		}
+		info, err := ReadAppBundleInfo(p)
+		if err != nil || info.BundleID == "" || info.IsWatchApp {
+			continue
+		}
+		candidates = append(candidates, struct {
+			path string
+			info AppBundleInfo
+		}{path: p, info: info})
+	}
+	if companionBundleID != "" {
+		for _, c := range candidates {
+			if c.info.BundleID == companionBundleID {
+				return c.path, c.info, nil
 			}
 		}
 	}
-	pick := func(list []Simulator) (Simulator, bool) {
-		if len(list) == 0 {
-			return Simulator{}, false
+	if len(candidates) == 1 {
+		return candidates[0].path, candidates[0].info, nil
+	}
+	return "", AppBundleInfo{}, errors.New("unable to resolve companion iOS app bundle near watch app")
+}
+
+func findWatchAppForCompanion(companionAppPath, companionBundleID string) (string, AppBundleInfo, error) {
+	watchDir := filepath.Join(companionAppPath, "Watch")
+	nested, _ := discoverAppBundles(watchDir, 2)
+	for _, p := range nested {
+		info, err := ReadAppBundleInfo(p)
+		if err != nil || !info.IsWatchApp {
+			continue
 		}
-		// Sort by OSVersion desc (string compare is okay for most iOS versions if format is "17.2" etc),
-		// then by name.
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].OSVersion == list[j].OSVersion {
-				return list[i].Name < list[j].Name
-			}
-			return list[i].OSVersion > list[j].OSVersion
-		})
-		return list[0], true
-	}
-	if s, ok := pick(booted); ok {
-		cfg.Destination = Destination{Kind: DestSimulator, UDID: s.UDID, Name: s.Name, Platform: "iOS Simulator", OS: s.OSVersion}
-		emitMaybe(emit, Status("context", "Auto-selected booted simulator", map[string]any{"name": s.Name, "udid": s.UDID, "os": s.OSVersion}))
-		return cfg, nil
-	}
-	if s, ok := pick(avail); ok {
-		cfg.Destination = Destination{Kind: DestSimulator, UDID: s.UDID, Name: s.Name, Platform: "iOS Simulator", OS: s.OSVersion}
-		emitMaybe(emit, Status("context", "Auto-selected simulator", map[string]any{"name": s.Name, "udid": s.UDID, "os": s.OSVersion}))
-		return cfg, nil
+		if info.CompanionBundleID != "" && companionBundleID != "" && info.CompanionBundleID != companionBundleID {
+			continue
+		}
+		return p, info, nil
 	}
 
-	return cfg, errors.New("no available iOS simulators found")
+	buildDir := filepath.Dir(companionAppPath)
+	paths, err := discoverAppBundles(buildDir, 4)
+	if err != nil {
+		return "", AppBundleInfo{}, err
+	}
+	candidates := []struct {
+		path string
+		info AppBundleInfo
+	}{}
+	for _, p := range paths {
+		info, err := ReadAppBundleInfo(p)
+		if err != nil || !info.IsWatchApp {
+			continue
+		}
+		if info.CompanionBundleID != "" && companionBundleID != "" && info.CompanionBundleID != companionBundleID {
+			continue
+		}
+		candidates = append(candidates, struct {
+			path string
+			info AppBundleInfo
+		}{path: p, info: info})
+	}
+	if len(candidates) == 1 {
+		return candidates[0].path, candidates[0].info, nil
+	}
+	if len(candidates) == 0 {
+		return "", AppBundleInfo{}, errors.New("watch app bundle not found (expected companion/Watch/*.app or nearby watch app output)")
+	}
+	return "", AppBundleInfo{}, errors.New("multiple watch app bundles found; refine scheme/build output")
+}
+
+func discoverAppBundles(root string, maxDepth int) ([]string, error) {
+	if strings.TrimSpace(root) == "" {
+		return nil, nil
+	}
+	if maxDepth <= 0 {
+		maxDepth = 3
+	}
+	if _, err := os.Stat(root); err != nil {
+		return nil, nil
+	}
+	root = filepath.Clean(root)
+	out := []string{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr == nil && rel != "." {
+			depth := strings.Count(rel, string(os.PathSeparator)) + 1
+			if depth > maxDepth {
+				return filepath.SkipDir
+			}
+		}
+		if strings.HasSuffix(strings.ToLower(d.Name()), ".app") {
+			out = append(out, path)
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return out, err
 }

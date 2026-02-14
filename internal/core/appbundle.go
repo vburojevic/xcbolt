@@ -9,12 +9,14 @@ import (
 )
 
 type AppBundleInfo struct {
-	BundleID     string
-	DisplayName  string
-	BundleName   string
-	Executable   string
-	Version      string
-	BuildVersion string
+	BundleID          string
+	DisplayName       string
+	BundleName        string
+	Executable        string
+	Version           string
+	BuildVersion      string
+	IsWatchApp        bool
+	CompanionBundleID string
 }
 
 func ReadAppBundleInfo(appPath string) (AppBundleInfo, error) {
@@ -36,12 +38,22 @@ func ReadAppBundleInfo(appPath string) (AppBundleInfo, error) {
 		}
 		return ""
 	}
+	getBool := func(key string) bool {
+		if v, ok := m[key]; ok {
+			if b, ok := v.(bool); ok {
+				return b
+			}
+		}
+		return false
+	}
 	return AppBundleInfo{
-		BundleID:     get("CFBundleIdentifier"),
-		DisplayName:  get("CFBundleDisplayName"),
-		BundleName:   get("CFBundleName"),
-		Executable:   get("CFBundleExecutable"),
-		Version:      get("CFBundleShortVersionString"),
-		BuildVersion: get("CFBundleVersion"),
+		BundleID:          get("CFBundleIdentifier"),
+		DisplayName:       get("CFBundleDisplayName"),
+		BundleName:        get("CFBundleName"),
+		Executable:        get("CFBundleExecutable"),
+		Version:           get("CFBundleShortVersionString"),
+		BuildVersion:      get("CFBundleVersion"),
+		IsWatchApp:        getBool("WKWatchKitApp"),
+		CompanionBundleID: get("WKCompanionAppBundleIdentifier"),
 	}, nil
 }

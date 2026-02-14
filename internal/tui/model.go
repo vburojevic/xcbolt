@@ -477,23 +477,26 @@ func (m *Model) openDestinationSelector() {
 	sims := make([]SimulatorInfo, len(m.info.Simulators))
 	for i, s := range m.info.Simulators {
 		sims[i] = SimulatorInfo{
-			Name:        s.Name,
-			UDID:        s.UDID,
-			State:       s.State,
-			RuntimeName: s.RuntimeName,
-			OSVersion:   s.OSVersion,
-			Available:   s.Available,
+			Name:           s.Name,
+			UDID:           s.UDID,
+			State:          s.State,
+			RuntimeName:    s.RuntimeName,
+			RuntimeID:      s.RuntimeID,
+			OSVersion:      s.OSVersion,
+			PlatformFamily: string(s.PlatformFamily),
+			Available:      s.Available,
 		}
 	}
 
 	devices := make([]DeviceInfo, len(m.info.Devices))
 	for i, d := range m.info.Devices {
 		devices[i] = DeviceInfo{
-			Name:       d.Name,
-			Identifier: d.Identifier,
-			Platform:   d.Platform,
-			OSVersion:  d.OSVersion,
-			Model:      d.Model,
+			Name:           d.Name,
+			Identifier:     d.Identifier,
+			Platform:       d.Platform,
+			OSVersion:      d.OSVersion,
+			Model:          d.Model,
+			PlatformFamily: string(d.PlatformFamily),
 		}
 	}
 
@@ -503,7 +506,10 @@ func (m *Model) openDestinationSelector() {
 		return
 	}
 
-	selectedID := m.cfg.Destination.UDID
+	selectedID := m.cfg.Destination.ID
+	if selectedID == "" {
+		selectedID = m.cfg.Destination.UDID
+	}
 	switch m.cfg.Destination.Kind {
 	case core.DestMacOS:
 		selectedID = "macos"
@@ -537,11 +543,14 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 	case SelectorDestination:
 		if item.ID == "macos" {
 			m.cfg.Destination = core.Destination{
-				Kind:     core.DestMacOS,
-				UDID:     "",
-				Name:     "My Mac",
-				Platform: "macOS",
-				OS:       "macOS",
+				Kind:           core.DestMacOS,
+				TargetType:     core.TargetLocal,
+				PlatformFamily: core.PlatformMacOS,
+				UDID:           "",
+				ID:             "",
+				Name:           "My Mac",
+				Platform:       "macOS",
+				OS:             "macOS",
 			}
 			m.setStatus("Destination: " + item.Title)
 			if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
@@ -551,11 +560,14 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 		}
 		if item.ID == "catalyst" {
 			m.cfg.Destination = core.Destination{
-				Kind:     core.DestCatalyst,
-				UDID:     "",
-				Name:     "My Mac (Catalyst)",
-				Platform: "macOS",
-				OS:       "macOS",
+				Kind:           core.DestCatalyst,
+				TargetType:     core.TargetLocal,
+				PlatformFamily: core.PlatformCatalyst,
+				UDID:           "",
+				ID:             "",
+				Name:           "My Mac (Catalyst)",
+				Platform:       "macOS",
+				OS:             "macOS",
 			}
 			m.setStatus("Destination: " + item.Title)
 			if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
@@ -566,12 +578,24 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 		// Find the destination in our lists
 		for _, sim := range m.info.Simulators {
 			if sim.UDID == item.ID {
+				family := sim.PlatformFamily
+				if family == "" {
+					family = core.InferPlatformFamilyFromRuntime(sim.RuntimeID, sim.RuntimeName, sim.Name)
+				}
+				platform := core.PlatformStringForDestination(family, core.TargetSimulator)
+				if platform == "" {
+					platform = "iOS Simulator"
+				}
 				m.cfg.Destination = core.Destination{
-					Kind:     "simulator",
-					UDID:     sim.UDID,
-					Name:     sim.Name,
-					Platform: "iOS Simulator",
-					OS:       sim.OSVersion,
+					Kind:           core.DestSimulator,
+					TargetType:     core.TargetSimulator,
+					PlatformFamily: family,
+					UDID:           sim.UDID,
+					ID:             sim.UDID,
+					Name:           sim.Name,
+					Platform:       platform,
+					OS:             sim.OSVersion,
+					RuntimeID:      sim.RuntimeID,
 				}
 				m.setStatus("Destination: " + item.Title)
 				if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
@@ -582,12 +606,23 @@ func (m *Model) handleSelectorResult(item *SelectorItem) {
 		}
 		for _, dev := range m.info.Devices {
 			if dev.Identifier == item.ID {
+				family := dev.PlatformFamily
+				if family == "" {
+					family = core.InferPlatformFamilyFromDevice(dev.Platform, dev.Model, dev.Name)
+				}
+				platform := core.PlatformStringForDestination(family, core.TargetDevice)
+				if platform == "" {
+					platform = dev.Platform
+				}
 				m.cfg.Destination = core.Destination{
-					Kind:     "device",
-					UDID:     dev.Identifier,
-					Name:     dev.Name,
-					Platform: dev.Platform,
-					OS:       dev.OSVersion,
+					Kind:           core.DestDevice,
+					TargetType:     core.TargetDevice,
+					PlatformFamily: family,
+					UDID:           dev.Identifier,
+					ID:             dev.Identifier,
+					Name:           dev.Name,
+					Platform:       platform,
+					OS:             dev.OSVersion,
 				}
 				m.setStatus("Destination: " + item.Title)
 				if err := core.SaveConfig(m.projectRoot, m.configPath, m.cfg); err != nil {
@@ -1447,11 +1482,13 @@ func (m *Model) openInEditor() tea.Cmd {
 }
 
 type stopTarget struct {
-	BundleID  string
-	PID       int
-	Target    string
-	UDID      string
-	SessionID string
+	BundleID          string
+	PID               int
+	Target            string
+	UDID              string
+	SessionID         string
+	CompanionTargetID string
+	CompanionBundleID string
 }
 
 func (m *Model) cancelRunningOp() {
@@ -1499,6 +1536,9 @@ func (m *Model) stopApp() tea.Cmd {
 			if err := core.DevicectlStop(ctx, target.UDID, target.PID, target.BundleID, nil); err != nil {
 				return statusMsg("Stop failed: " + err.Error())
 			}
+			if target.CompanionTargetID != "" && target.CompanionBundleID != "" {
+				_ = core.DevicectlStop(ctx, target.CompanionTargetID, 0, target.CompanionBundleID, nil)
+			}
 		case string(core.DestMacOS), string(core.DestCatalyst):
 			if target.PID == 0 {
 				return statusMsg("Missing PID for stop")
@@ -1539,6 +1579,8 @@ func (m *Model) resolveStopTarget() (stopTarget, error) {
 		target.Target = sess.Target
 		target.UDID = sess.UDID
 		target.SessionID = sess.ID
+		target.CompanionTargetID = sess.CompanionTargetID
+		target.CompanionBundleID = sess.CompanionBundleID
 	}
 
 	if target.Target == "" {
@@ -1714,14 +1756,23 @@ func (m *Model) tryAutoDetect() bool {
 		}
 	}
 
-	// Auto-select destination: prefer first booted simulator
-	if m.cfg.Destination.UDID == "" && len(m.info.Simulators) > 0 {
+	// Auto-select destination: prefer first booted simulator unless local Mac target is already selected.
+	if m.cfg.Destination.UDID == "" &&
+		m.cfg.Destination.Kind != core.DestMacOS &&
+		m.cfg.Destination.Kind != core.DestCatalyst &&
+		len(m.info.Simulators) > 0 {
 		m.cfg.Destination.Kind = core.DestSimulator
+		m.cfg.Destination.TargetType = core.TargetSimulator
 		for _, sim := range m.info.Simulators {
 			if sim.Available && sim.State == "Booted" {
 				m.cfg.Destination.UDID = sim.UDID
+				m.cfg.Destination.ID = sim.UDID
 				m.cfg.Destination.Name = sim.Name
-				m.cfg.Destination.Platform = "iOS Simulator"
+				m.cfg.Destination.PlatformFamily = sim.PlatformFamily
+				m.cfg.Destination.Platform = core.PlatformStringForDestination(sim.PlatformFamily, core.TargetSimulator)
+				if m.cfg.Destination.Platform == "" {
+					m.cfg.Destination.Platform = "iOS Simulator"
+				}
 				m.cfg.Destination.OS = sim.OSVersion
 				break
 			}
@@ -1731,8 +1782,13 @@ func (m *Model) tryAutoDetect() bool {
 			for _, sim := range m.info.Simulators {
 				if sim.Available {
 					m.cfg.Destination.UDID = sim.UDID
+					m.cfg.Destination.ID = sim.UDID
 					m.cfg.Destination.Name = sim.Name
-					m.cfg.Destination.Platform = "iOS Simulator"
+					m.cfg.Destination.PlatformFamily = sim.PlatformFamily
+					m.cfg.Destination.Platform = core.PlatformStringForDestination(sim.PlatformFamily, core.TargetSimulator)
+					if m.cfg.Destination.Platform == "" {
+						m.cfg.Destination.Platform = "iOS Simulator"
+					}
 					m.cfg.Destination.OS = sim.OSVersion
 					break
 				}

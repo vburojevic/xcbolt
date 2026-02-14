@@ -91,28 +91,24 @@ func extractJSONObject(s string) string {
 
 // BuildDestinationString builds an xcodebuild -destination string from config.
 func BuildDestinationString(cfg Config) string {
-	switch cfg.Destination.Kind {
-	case DestSimulator:
-		udid := cfg.Destination.UDID
-		if udid == "" {
+	dst := normalizeDestination(cfg.Destination)
+	switch dst.Kind {
+	case DestSimulator, DestDevice:
+		id := strings.TrimSpace(dst.ID)
+		if id == "" {
+			id = strings.TrimSpace(dst.UDID)
+		}
+		if id == "" {
 			return ""
 		}
-		// Prefer explicit platform string; fall back to iOS Simulator.
-		platform := cfg.Destination.Platform
+		platform := dst.Platform
 		if platform == "" {
-			platform = "iOS Simulator"
+			platform = PlatformStringForDestination(dst.PlatformFamily, dst.TargetType)
 		}
-		return fmt.Sprintf("platform=%s,id=%s", platform, udid)
-	case DestDevice:
-		udid := cfg.Destination.UDID
-		if udid == "" {
+		if platform == "" {
 			return ""
 		}
-		platform := cfg.Destination.Platform
-		if platform == "" {
-			platform = "iOS"
-		}
-		return fmt.Sprintf("platform=%s,id=%s", platform, udid)
+		return fmt.Sprintf("platform=%s,id=%s", platform, id)
 	case DestMacOS:
 		return "platform=macOS"
 	case DestCatalyst:

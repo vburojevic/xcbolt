@@ -177,6 +177,7 @@ func (w wizardModel) Update(msg tea.Msg) (wizardModel, tea.Cmd) {
 		cfg.Configuration = strings.TrimSpace(w.configuration)
 		cfg.Destination.Kind = core.DestinationKind(w.destKind)
 		cfg.Destination.UDID = strings.TrimSpace(w.targetUDID)
+		cfg.Destination.ID = strings.TrimSpace(w.targetUDID)
 
 		if strings.HasPrefix(w.projectChoice, "workspace:") {
 			cfg.Workspace = strings.TrimPrefix(w.projectChoice, "workspace:")
@@ -189,23 +190,50 @@ func (w wizardModel) Update(msg tea.Msg) (wizardModel, tea.Cmd) {
 		// Resolve target display name.
 		switch cfg.Destination.Kind {
 		case core.DestSimulator:
+			cfg.Destination.TargetType = core.TargetSimulator
 			for _, s := range w.info.Simulators {
 				if s.UDID == cfg.Destination.UDID {
 					cfg.Destination.Name = s.Name
-					cfg.Destination.Platform = "iOS Simulator"
+					cfg.Destination.PlatformFamily = s.PlatformFamily
+					cfg.Destination.Platform = core.PlatformStringForDestination(s.PlatformFamily, core.TargetSimulator)
+					if cfg.Destination.Platform == "" {
+						cfg.Destination.Platform = "iOS Simulator"
+					}
 					cfg.Destination.OS = s.OSVersion
+					cfg.Destination.RuntimeID = s.RuntimeID
 					break
 				}
 			}
 		case core.DestDevice:
+			cfg.Destination.TargetType = core.TargetDevice
 			for _, d := range w.info.Devices {
 				if d.Identifier == cfg.Destination.UDID {
 					cfg.Destination.Name = d.Name
-					cfg.Destination.Platform = "iOS"
+					cfg.Destination.PlatformFamily = d.PlatformFamily
+					cfg.Destination.Platform = core.PlatformStringForDestination(d.PlatformFamily, core.TargetDevice)
+					if cfg.Destination.Platform == "" {
+						cfg.Destination.Platform = "iOS"
+					}
 					cfg.Destination.OS = d.OSVersion
 					break
 				}
 			}
+		case core.DestMacOS:
+			cfg.Destination.TargetType = core.TargetLocal
+			cfg.Destination.PlatformFamily = core.PlatformMacOS
+			cfg.Destination.Name = "My Mac"
+			cfg.Destination.Platform = "macOS"
+			cfg.Destination.OS = "macOS"
+			cfg.Destination.ID = ""
+			cfg.Destination.UDID = ""
+		case core.DestCatalyst:
+			cfg.Destination.TargetType = core.TargetLocal
+			cfg.Destination.PlatformFamily = core.PlatformCatalyst
+			cfg.Destination.Name = "My Mac (Catalyst)"
+			cfg.Destination.Platform = "macOS"
+			cfg.Destination.OS = "macOS"
+			cfg.Destination.ID = ""
+			cfg.Destination.UDID = ""
 		}
 
 		return w, tea.Batch(cmd, func() tea.Msg { return wizardDoneMsg{cfg: cfg} })

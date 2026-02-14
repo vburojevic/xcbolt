@@ -1,6 +1,8 @@
 package core
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,5 +58,70 @@ func TestEnsureProjectDirsAppendsMissingGitignoreEntries(t *testing.T) {
 	}
 	if strings.Count(content, "Results/") != 1 {
 		t.Fatalf("unexpected Results entries: %q", content)
+	}
+}
+
+func TestLoadConfigRejectsLegacyVersion(t *testing.T) {
+	root := t.TempDir()
+	if err := EnsureProjectDirs(root); err != nil {
+		t.Fatalf("EnsureProjectDirs: %v", err)
+	}
+	path := ConfigPath(root)
+	legacy := map[string]any{
+		"version": 1,
+		"scheme":  "App",
+	}
+	b, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy config: %v", err)
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	_, err = LoadConfig(root, "")
+	if err == nil {
+		t.Fatalf("expected version mismatch error")
+	}
+	var verr ConfigVersionError
+	if !strings.Contains(err.Error(), "version mismatch") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.As(err, &verr) {
+		t.Fatalf("expected ConfigVersionError, got %T", err)
+	}
+}
+
+func TestSaveAndLoadConfigV2RoundTrip(t *testing.T) {
+	root := t.TempDir()
+	cfg := DefaultConfig(root)
+	cfg.Scheme = "App"
+	cfg.Destination = Destination{
+		Kind:              DestDevice,
+		PlatformFamily:    PlatformWatchOS,
+		TargetType:        TargetDevice,
+		ID:                "WATCH-UDID",
+		UDID:              "WATCH-UDID",
+		Name:              "My Watch",
+		Platform:          "watchOS",
+		CompanionTargetID: "PHONE-UDID",
+		CompanionBundleID: "com.example.phone",
+	}
+
+	if err := SaveConfig(root, "", cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	loaded, err := LoadConfig(root, "")
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if loaded.Version != ConfigVersion {
+		t.Fatalf("version = %d, want %d", loaded.Version, ConfigVersion)
+	}
+	if loaded.Destination.PlatformFamily != PlatformWatchOS {
+		t.Fatalf("platformFamily = %q", loaded.Destination.PlatformFamily)
+	}
+	if loaded.Destination.CompanionTargetID != "PHONE-UDID" {
+		t.Fatalf("companion target = %q", loaded.Destination.CompanionTargetID)
 	}
 }

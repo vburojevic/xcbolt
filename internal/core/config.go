@@ -10,7 +10,17 @@ import (
 	"strings"
 )
 
-const ConfigVersion = 1
+const ConfigVersion = 2
+
+type ConfigVersionError struct {
+	Path string
+	Got  int
+	Want int
+}
+
+func (e ConfigVersionError) Error() string {
+	return fmt.Sprintf("config version mismatch for %s: got v%d, expected v%d (run `xcbolt init` to regenerate config)", e.Path, e.Got, e.Want)
+}
 
 type DestinationKind string
 
@@ -23,11 +33,17 @@ const (
 )
 
 type Destination struct {
-	Kind     DestinationKind `json:"kind"`
-	UDID     string          `json:"udid,omitempty"`
-	Name     string          `json:"name,omitempty"`
-	Platform string          `json:"platform,omitempty"` // e.g. iOS, iOS Simulator, macOS
-	OS       string          `json:"os,omitempty"`       // e.g. 17.2
+	Kind              DestinationKind `json:"kind"`
+	UDID              string          `json:"udid,omitempty"` // legacy alias for ID
+	Name              string          `json:"name,omitempty"`
+	Platform          string          `json:"platform,omitempty"` // e.g. iOS, iOS Simulator, macOS
+	OS                string          `json:"os,omitempty"`       // e.g. 17.2
+	PlatformFamily    PlatformFamily  `json:"platformFamily,omitempty"`
+	TargetType        TargetType      `json:"targetType,omitempty"`
+	ID                string          `json:"id,omitempty"`
+	RuntimeID         string          `json:"runtimeId,omitempty"`
+	CompanionTargetID string          `json:"companionTargetId,omitempty"`
+	CompanionBundleID string          `json:"companionBundleId,omitempty"`
 }
 
 type XcodebuildConfig struct {
@@ -84,7 +100,7 @@ func DefaultConfig(projectRoot string) Config {
 	return Config{
 		Version:           ConfigVersion,
 		Configuration:     "Debug",
-		Destination:       Destination{Kind: DestAuto},
+		Destination:       Destination{Kind: DestAuto, TargetType: TargetAuto},
 		DerivedDataPath:   filepath.Join(projectRoot, ".xcbolt", "DerivedData"),
 		ResultBundlesPath: filepath.Join(projectRoot, ".xcbolt", "Results"),
 		Xcodebuild:        XcodebuildConfig{Env: map[string]string{}, Options: []string{}, LogFormat: "auto", LogFormatArgs: []string{}},
@@ -166,8 +182,8 @@ func LoadConfig(projectRoot string, overridePath string) (Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, fmt.Errorf("failed to parse config %s: %w", path, err)
 	}
-	if cfg.Version == 0 {
-		cfg.Version = ConfigVersion
+	if cfg.Version != ConfigVersion {
+		return cfg, ConfigVersionError{Path: path, Got: cfg.Version, Want: ConfigVersion}
 	}
 	// Ensure defaults for computed paths if missing.
 	if cfg.DerivedDataPath == "" {
@@ -185,6 +201,7 @@ func LoadConfig(projectRoot string, overridePath string) (Config, error) {
 	if cfg.Launch.Env == nil {
 		cfg.Launch.Env = map[string]string{}
 	}
+	syncDestinationLegacy(&cfg.Destination)
 	return cfg, nil
 }
 
@@ -196,6 +213,7 @@ func SaveConfig(projectRoot string, overridePath string, cfg Config) error {
 	if path == "" {
 		path = ConfigPath(projectRoot)
 	}
+	syncDestinationLegacy(&cfg.Destination)
 	cfg.Version = ConfigVersion
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

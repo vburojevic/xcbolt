@@ -12,6 +12,10 @@ func newRunCmd() *cobra.Command {
 	var configuration string
 	var simulator string
 	var device string
+	var platform string
+	var target string
+	var targetType string
+	var companionTarget string
 	var console bool
 
 	cmd := &cobra.Command{
@@ -22,7 +26,9 @@ func newRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			applyOverrides(&ac.Config, scheme, configuration, simulator, device)
+			if err := applyOverrides(&ac.Config, scheme, configuration, simulator, device, platform, target, targetType, companionTarget, ac.Emitter); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -38,6 +44,10 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&configuration, "configuration", "", "Override configuration")
 	cmd.Flags().StringVar(&simulator, "simulator", "", "Simulator UDID")
 	cmd.Flags().StringVar(&device, "device", "", "Device UDID")
+	cmd.Flags().StringVar(&platform, "platform", "", "Destination platform family (ios|ipados|tvos|visionos|watchos|macos|catalyst)")
+	cmd.Flags().StringVar(&target, "target", "", "Destination ID or exact name")
+	cmd.Flags().StringVar(&targetType, "target-type", "", "Destination target type (simulator|device|local)")
+	cmd.Flags().StringVar(&companionTarget, "companion-target", "", "Companion destination ID/name (watchOS physical runs)")
 	cmd.Flags().BoolVar(&console, "console", false, "Attempt to stream app output (simctl --console / devicectl --console)")
 
 	return cmd

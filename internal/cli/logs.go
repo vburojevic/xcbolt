@@ -21,7 +21,9 @@ func newLogsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			applyOverrides(&ac.Config, "", "", simulator, device)
+			if err := applyOverrides(&ac.Config, "", "", simulator, device, "", "", "", "", ac.Emitter); err != nil {
+				return err
+			}
 
 			ctx := context.Background()
 

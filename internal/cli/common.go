@@ -100,7 +100,10 @@ func persistConfigIfChanged(ac AppContext, cfg core.Config) {
 		cfg.Workspace == ac.Config.Workspace &&
 		cfg.Project == ac.Config.Project &&
 		cfg.Destination.Kind == ac.Config.Destination.Kind &&
-		cfg.Destination.UDID == ac.Config.Destination.UDID {
+		cfg.Destination.UDID == ac.Config.Destination.UDID &&
+		cfg.Destination.ID == ac.Config.Destination.ID &&
+		cfg.Destination.PlatformFamily == ac.Config.Destination.PlatformFamily &&
+		cfg.Destination.TargetType == ac.Config.Destination.TargetType {
 		return
 	}
 	if err := core.SaveConfig(ac.ProjectRoot, ac.ConfigPath, cfg); err != nil {

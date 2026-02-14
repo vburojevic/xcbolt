@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,40 @@ func newInitCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ac, err := NewAppContext(flags)
 			if err != nil {
-				return err
+				// Allow init to recover from schema cutovers.
+				root, rerr := resolveProjectRoot(flags.Project)
+				if rerr != nil {
+					return err
+				}
+				cfg := core.DefaultConfig(root)
+				if flags.LogFormat != "" {
+					cfg.Xcodebuild.LogFormat = flags.LogFormat
+				}
+				if len(flags.LogFormatArgs) > 0 {
+					cfg.Xcodebuild.LogFormatArgs = flags.LogFormatArgs
+				}
+				emit := core.Emitter(core.NewTextEmitter(cmd.OutOrStdout()))
+				if flags.JSON {
+					emit = core.NewNDJSONEmitter(cmd.OutOrStdout())
+				}
+				var verr core.ConfigVersionError
+				if errors.As(err, &verr) {
+					emit.Emit(core.Warn("init", err.Error()))
+					cfg = core.DefaultConfig(root)
+					cfgPath := flags.Config
+					if cfgPath == "" {
+						cfgPath = core.ConfigPath(root)
+					}
+					ac = AppContext{
+						ProjectRoot: root,
+						ConfigPath:  cfgPath,
+						Config:      cfg,
+						Emitter:     emit,
+						Flags:       flags,
+					}
+				} else {
+					return err
+				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
@@ -180,8 +214,12 @@ func runInitWizard(info core.ContextInfo, cfg core.Config) (core.Config, error) 
 	// Destination details
 	udid := ""
 	name := ""
+	platformFamily := core.PlatformUnknown
+	targetType := core.TargetAuto
+	runtimeID := ""
 	switch core.DestinationKind(destKind) {
 	case core.DestSimulator:
+		targetType = core.TargetSimulator
 		simOpts := []huh.Option[string]{}
 		for _, s := range info.Simulators {
 			if !s.Available {
@@ -203,12 +241,18 @@ func runInitWizard(info core.ContextInfo, cfg core.Config) (core.Config, error) 
 		for _, s := range info.Simulators {
 			if s.UDID == udid {
 				name = s.Name
-				cfg.Destination.Platform = "iOS Simulator"
+				platformFamily = s.PlatformFamily
+				cfg.Destination.Platform = core.PlatformStringForDestination(platformFamily, core.TargetSimulator)
+				if cfg.Destination.Platform == "" {
+					cfg.Destination.Platform = "iOS Simulator"
+				}
 				cfg.Destination.OS = s.OSVersion
+				runtimeID = s.RuntimeID
 				break
 			}
 		}
 	case core.DestDevice:
+		targetType = core.TargetDevice
 		devOpts := []huh.Option[string]{}
 		for _, d := range info.Devices {
 			label := d.Name
@@ -230,11 +274,27 @@ func runInitWizard(info core.ContextInfo, cfg core.Config) (core.Config, error) 
 		for _, d := range info.Devices {
 			if d.Identifier == udid {
 				name = d.Name
-				cfg.Destination.Platform = "iOS"
+				platformFamily = d.PlatformFamily
+				cfg.Destination.Platform = core.PlatformStringForDestination(platformFamily, core.TargetDevice)
+				if cfg.Destination.Platform == "" {
+					cfg.Destination.Platform = "iOS"
+				}
 				cfg.Destination.OS = d.OSVersion
 				break
 			}
 		}
+	case core.DestMacOS:
+		targetType = core.TargetLocal
+		platformFamily = core.PlatformMacOS
+		name = "My Mac"
+		cfg.Destination.Platform = "macOS"
+		cfg.Destination.OS = "macOS"
+	case core.DestCatalyst:
+		targetType = core.TargetLocal
+		platformFamily = core.PlatformCatalyst
+		name = "My Mac (Catalyst)"
+		cfg.Destination.Platform = "macOS"
+		cfg.Destination.OS = "macOS"
 	}
 
 	// Apply to config
@@ -242,7 +302,11 @@ func runInitWizard(info core.ContextInfo, cfg core.Config) (core.Config, error) 
 	cfg.Configuration = conf
 	cfg.Destination.Kind = core.DestinationKind(destKind)
 	cfg.Destination.UDID = strings.TrimSpace(udid)
+	cfg.Destination.ID = strings.TrimSpace(udid)
 	cfg.Destination.Name = name
+	cfg.Destination.TargetType = targetType
+	cfg.Destination.PlatformFamily = platformFamily
+	cfg.Destination.RuntimeID = runtimeID
 
 	if strings.HasPrefix(projChoice, "workspace:") {
 		cfg.Workspace = strings.TrimPrefix(projChoice, "workspace:")

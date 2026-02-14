@@ -5,18 +5,24 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
-const SessionsVersion = 1
+const SessionsVersion = 2
 
 type Session struct {
-	ID        string `json:"id"`
-	BundleID  string `json:"bundleId"`
-	PID       int    `json:"pid,omitempty"`
-	Target    string `json:"target"` // simulator|device|macos
-	UDID      string `json:"udid,omitempty"`
-	StartedAt string `json:"startedAt"`
+	ID                string `json:"id"`
+	BundleID          string `json:"bundleId"`
+	PID               int    `json:"pid,omitempty"`
+	Target            string `json:"target"` // simulator|device|macos
+	UDID              string `json:"udid,omitempty"`
+	PlatformFamily    string `json:"platformFamily,omitempty"`
+	TargetType        string `json:"targetType,omitempty"`
+	TargetID          string `json:"targetId,omitempty"`
+	CompanionTargetID string `json:"companionTargetId,omitempty"`
+	CompanionBundleID string `json:"companionBundleId,omitempty"`
+	StartedAt         string `json:"startedAt"`
 }
 
 type Sessions struct {
@@ -41,8 +47,9 @@ func LoadSessions(projectRoot string) (Sessions, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return Sessions{}, err
 	}
-	if s.Version == 0 {
-		s.Version = SessionsVersion
+	if s.Version != SessionsVersion {
+		// Hard-cutover for session schema: reset to empty state.
+		return Sessions{Version: SessionsVersion, Items: []Session{}}, nil
 	}
 	return s, nil
 }
@@ -62,21 +69,58 @@ func SaveSessions(projectRoot string, s Sessions) error {
 }
 
 func AddSession(projectRoot string, bundleID string, pid int, target string, udid string) (Session, error) {
+	dst := Destination{}
+	switch target {
+	case "simulator":
+		dst.Kind = DestSimulator
+		dst.TargetType = TargetSimulator
+	case "device":
+		dst.Kind = DestDevice
+		dst.TargetType = TargetDevice
+	case "catalyst":
+		dst.Kind = DestCatalyst
+		dst.TargetType = TargetLocal
+		dst.PlatformFamily = PlatformCatalyst
+	case "macos":
+		dst.Kind = DestMacOS
+		dst.TargetType = TargetLocal
+		dst.PlatformFamily = PlatformMacOS
+	}
+	dst.UDID = udid
+	dst.ID = udid
+	return AddSessionWithDestination(projectRoot, bundleID, pid, dst)
+}
+
+func AddSessionWithDestination(projectRoot string, bundleID string, pid int, dst Destination) (Session, error) {
 	s, err := LoadSessions(projectRoot)
 	if err != nil {
 		return Session{}, err
+	}
+	dst = normalizeDestination(dst)
+	target := string(dst.Kind)
+	if target == "" || dst.Kind == DestAuto {
+		target = string(dst.TargetType)
+	}
+	udid := strings.TrimSpace(dst.ID)
+	if udid == "" {
+		udid = strings.TrimSpace(dst.UDID)
 	}
 	id := bundleID
 	if udid != "" {
 		id = id + "@" + udid
 	}
 	sess := Session{
-		ID:        id,
-		BundleID:  bundleID,
-		PID:       pid,
-		Target:    target,
-		UDID:      udid,
-		StartedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		ID:                id,
+		BundleID:          bundleID,
+		PID:               pid,
+		Target:            target,
+		UDID:              udid,
+		TargetID:          udid,
+		PlatformFamily:    string(dst.PlatformFamily),
+		TargetType:        string(dst.TargetType),
+		CompanionTargetID: dst.CompanionTargetID,
+		CompanionBundleID: dst.CompanionBundleID,
+		StartedAt:         time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	// Remove any existing with same ID
 	filtered := make([]Session, 0, len(s.Items))

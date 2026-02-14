@@ -98,7 +98,7 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 |---------|-------------|
 | `xcbolt build` | Build the configured scheme |
 | `xcbolt test` | Run tests |
-| `xcbolt run` | Build, install, and launch on simulator/device |
+| `xcbolt run` | Build, install, and launch on selected simulator/device/mac target |
 | `xcbolt clean` | Clean derived data |
 
 ### Info & Setup
@@ -137,8 +137,17 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 # Build with scheme override
 xcbolt build --scheme MyScheme --configuration Release
 
-# Run with console output
-xcbolt run --console
+# Run on a specific tvOS simulator
+xcbolt run --platform tvos --target-type simulator --target "<simulator-udid-or-name>"
+
+# Run on local Mac
+xcbolt run --platform macos --target-type local
+
+# Run watchOS on physical device (companion-driven)
+xcbolt run --platform watchos --target-type device --target "<watch-udid-or-name>" --companion-target "<iphone-udid-or-name>" --console
+
+# Stop watch session (also attempts to stop companion app on paired iPhone)
+xcbolt stop <watch-bundle-id>
 
 # Stream logs with predicate filter
 xcbolt logs --predicate 'process == "MyApp"'
@@ -182,13 +191,15 @@ Running `xcbolt init` creates `.xcbolt/config.json`:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "workspace": "MyApp.xcworkspace",
   "scheme": "MyApp",
   "configuration": "Debug",
   "destination": {
     "kind": "simulator",
-    "udid": "...",
+    "platformFamily": "ios",
+    "targetType": "simulator",
+    "id": "...",
     "name": "iPhone 16 Pro"
   },
   "xcodebuild": {
@@ -203,8 +214,32 @@ Running `xcbolt init` creates `.xcbolt/config.json`:
 | `workspace` / `project` | Path to `.xcworkspace` or `.xcodeproj` |
 | `scheme` | Build scheme name |
 | `configuration` | Build configuration (`Debug` / `Release`) |
-| `destination` | Target simulator or device |
+| `destination` | Target simulator/device/local destination across Apple platforms |
 | `xcodebuild.logFormat` | Log formatter: `auto`, `xcpretty`, `xcbeautify`, `raw` |
+
+### Destination Flags
+
+`build`, `test`, and `run` support:
+
+```bash
+--platform ios|ipados|tvos|visionos|watchos|macos|catalyst
+--target <destination-id-or-exact-name>
+--target-type simulator|device|local
+--companion-target <destination-id-or-name>   # watchOS physical runs
+```
+
+Legacy flags `--simulator` and `--device` still work but are deprecated.
+
+### Config Migration
+
+`xcbolt` now expects `.xcbolt/config.json` schema version `2`.
+If you still have a v1 config, run:
+
+```bash
+xcbolt init
+```
+
+to regenerate it.
 
 ---
 

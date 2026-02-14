@@ -533,20 +533,32 @@ func DestinationItems(sims []SimulatorInfo, devices []DeviceInfo) []SelectorItem
 		if sim.State == "Booted" {
 			meta = "[booted]"
 		}
+		desc := sim.RuntimeName
+		if sim.PlatformFamily != "" {
+			desc = sim.PlatformFamily + " • " + desc
+		}
 		items = append(items, SelectorItem{
 			ID:          sim.UDID,
 			Title:       sim.Name,
-			Description: sim.RuntimeName,
+			Description: desc,
 			Meta:        meta,
 		})
 	}
 
 	// Add devices
 	for _, dev := range devices {
+		desc := dev.OSVersion
+		if dev.PlatformFamily != "" {
+			if desc != "" {
+				desc = dev.PlatformFamily + " • " + desc
+			} else {
+				desc = dev.PlatformFamily
+			}
+		}
 		items = append(items, SelectorItem{
 			ID:          dev.Identifier,
 			Title:       dev.Name,
-			Description: dev.OSVersion,
+			Description: desc,
 			Meta:        "[device]",
 		})
 	}
@@ -556,21 +568,24 @@ func DestinationItems(sims []SimulatorInfo, devices []DeviceInfo) []SelectorItem
 
 // SimulatorInfo matches core.Simulator structure
 type SimulatorInfo struct {
-	Name        string
-	UDID        string
-	State       string
-	RuntimeName string
-	OSVersion   string
-	Available   bool
+	Name           string
+	UDID           string
+	State          string
+	RuntimeName    string
+	RuntimeID      string
+	OSVersion      string
+	PlatformFamily string
+	Available      bool
 }
 
 // DeviceInfo matches core.Device structure
 type DeviceInfo struct {
-	Name       string
-	Identifier string
-	Platform   string
-	OSVersion  string
-	Model      string
+	Name           string
+	Identifier     string
+	Platform       string
+	OSVersion      string
+	Model          string
+	PlatformFamily string
 }
 
 // =============================================================================

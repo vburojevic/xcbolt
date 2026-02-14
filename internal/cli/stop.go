@@ -58,6 +58,11 @@ func newStopCmd() *cobra.Command {
 				if err := core.DevicectlStop(ctx, sess.UDID, sess.PID, sess.BundleID, ac.Emitter); err != nil {
 					return err
 				}
+				if sess.CompanionTargetID != "" && sess.CompanionBundleID != "" {
+					if err := core.DevicectlStop(ctx, sess.CompanionTargetID, 0, sess.CompanionBundleID, ac.Emitter); err != nil {
+						ac.Emitter.Emit(core.Warn("stop", "failed to stop companion app on paired iPhone: "+err.Error()))
+					}
+				}
 			default:
 				return fmt.Errorf("stop not implemented for target %q", sess.Target)
 			}

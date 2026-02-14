@@ -40,13 +40,14 @@ type simctlListJSON struct {
 }
 
 type Simulator struct {
-	Name        string `json:"name"`
-	UDID        string `json:"udid"`
-	State       string `json:"state"`
-	RuntimeName string `json:"runtimeName"`
-	RuntimeID   string `json:"runtimeId"`
-	OSVersion   string `json:"osVersion,omitempty"`
-	Available   bool   `json:"available"`
+	Name           string         `json:"name"`
+	UDID           string         `json:"udid"`
+	State          string         `json:"state"`
+	RuntimeName    string         `json:"runtimeName"`
+	RuntimeID      string         `json:"runtimeId"`
+	OSVersion      string         `json:"osVersion,omitempty"`
+	PlatformFamily PlatformFamily `json:"platformFamily,omitempty"`
+	Available      bool           `json:"available"`
 }
 
 func SimctlList(ctx context.Context, emit Emitter) (simctlListJSON, error) {
@@ -90,13 +91,14 @@ func FlattenSimulators(list simctlListJSON) []Simulator {
 				avail = true
 			}
 			out = append(out, Simulator{
-				Name:        d.Name,
-				UDID:        d.UDID,
-				State:       d.State,
-				RuntimeName: runtimeName[runtimeID],
-				RuntimeID:   runtimeID,
-				OSVersion:   runtimeVersion[runtimeID],
-				Available:   avail,
+				Name:           d.Name,
+				UDID:           d.UDID,
+				State:          d.State,
+				RuntimeName:    runtimeName[runtimeID],
+				RuntimeID:      runtimeID,
+				OSVersion:      runtimeVersion[runtimeID],
+				PlatformFamily: InferPlatformFamilyFromRuntime(runtimeID, runtimeName[runtimeID], d.Name),
+				Available:      avail,
 			})
 		}
 	}
