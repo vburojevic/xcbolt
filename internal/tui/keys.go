@@ -94,7 +94,8 @@ type keyMap struct {
 	SelectEnter key.Binding
 
 	// Run mode split view
-	SwitchPane key.Binding
+	SwitchPane  key.Binding
+	ToggleMouse key.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -301,6 +302,10 @@ func defaultKeyMap() keyMap {
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "switch pane"),
 		),
+		ToggleMouse: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "toggle mouse"),
+		),
 	}
 }
 
@@ -319,7 +324,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 		// Tabs
 		{k.Tab1, k.Tab2, k.Tab3, k.TabNext},
 		// View controls
-		{k.ToggleRawView, k.ToggleLineNumbers, k.ToggleTimestamps, k.ToggleErrorsOnly, k.ExpandAll, k.CollapseAll},
+		{k.ToggleRawView, k.ToggleLineNumbers, k.ToggleTimestamps, k.ToggleErrorsOnly, k.ToggleMouse, k.ExpandAll, k.CollapseAll},
 		// Scrolling
 		{k.ScrollUp, k.ScrollDown, k.PageUp, k.PageDown, k.ScrollTop, k.ScrollBottom},
 		// Navigation & Other

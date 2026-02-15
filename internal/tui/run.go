@@ -9,7 +9,8 @@ func Run(projectRoot string, configPath string, overrides ConfigOverrides) error
 	p := tea.NewProgram(
 		m,
 		tea.WithAltScreen(),
-		tea.WithReportFocus(), // required for huh focus support in larger programs
+		tea.WithReportFocus(),      // required for huh focus support in larger programs
+		tea.WithMouseCellMotion(),   // mouse wheel scroll (Shift+drag to select text)
 	)
 	_, err := p.Run()
 	return err

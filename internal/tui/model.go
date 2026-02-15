@@ -193,7 +193,8 @@ type Model struct {
 	lastErr    string
 
 	// Run mode split view
-	runMode RunModeState
+	runMode      RunModeState
+	mouseEnabled bool
 }
 
 // NewModel creates a new TUI model
@@ -242,6 +243,7 @@ func NewModel(projectRoot string, configPath string, overrides ConfigOverrides) 
 		mode:         ModeNormal,
 		logViewMode:  LogViewCards,
 		state:        state,
+		mouseEnabled: true,
 		// Layout components
 		layout:      layout,
 		statusBar:   statusBar,
@@ -1359,6 +1361,15 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) tea.Cmd {
 
 	case keyMatches(msg, m.keys.OpenEditor):
 		return m.openInEditor()
+
+	case keyMatches(msg, m.keys.ToggleMouse):
+		m.mouseEnabled = !m.mouseEnabled
+		if m.mouseEnabled {
+			m.setStatus("Mouse on (Shift+drag to select text)")
+			return tea.EnableMouseCellMotion
+		}
+		m.setStatus("Mouse off (drag to select text)")
+		return tea.DisableMouse
 
 	case keyMatches(msg, m.keys.Search):
 		m.enterSearchMode()
@@ -2711,6 +2722,11 @@ func (m Model) mainView() string {
 			hints = append(hints, HintItem{Key: key, Desc: "restart"})
 		}
 	}
+	if m.mouseEnabled {
+		hints = append(hints, HintItem{Key: "m", Desc: "mouse:on"})
+	} else {
+		hints = append(hints, HintItem{Key: "m", Desc: "mouse:off"})
+	}
 	hintsBarContent := m.hintsBar.renderHints(hints, m.styles)
 
 	// Use split view for run mode
@@ -2963,6 +2979,17 @@ func (m Model) runModeHintsBar() string {
 			Key  string
 			Desc string
 		}{"r", "run"})
+	}
+	if m.mouseEnabled {
+		hints = append(hints, struct {
+			Key  string
+			Desc string
+		}{"m", "mouse:on"})
+	} else {
+		hints = append(hints, struct {
+			Key  string
+			Desc string
+		}{"m", "mouse:off"})
 	}
 	hints = append(hints,
 		struct {
