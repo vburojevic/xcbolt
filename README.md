@@ -60,9 +60,9 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 
 | Tab | Description |
 |-----|-------------|
+| **Dashboard** | Card-based dashboard with project info and build status |
 | **Logs** | Real-time build output with search and filtering |
 | **Issues** | Errors and warnings extracted for quick navigation |
-| **Dashboard** | Card-based dashboard with project info and build status |
 
 ### Keybindings
 
@@ -76,19 +76,27 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 **Navigation:**
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `1` | Logs tab | `s` | Select scheme |
-| `2` | Issues tab | `d` | Select destination |
-| `3` | Dashboard tab | `Ctrl+K` | Command palette |
+| `1` | Dashboard tab | `s` | Select scheme |
+| `2` | Logs tab | `d` | Select destination |
+| `3` | Issues tab | `Ctrl+K` | Command palette |
 | `tab` | Next tab | `i` | Init wizard |
 | `~` | Build config | `Ctrl+R` | Refresh context |
 
 **Search & View:**
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `/` | Search logs | `v` | Toggle view mode |
+| `/` | Search logs | `v` | Toggle logs view |
 | `n` / `N` | Next/prev error | `e` / `E` | Expand/collapse all |
-| `o` | Open in Xcode | `y` | Copy line |
+| `o` | Open in Xcode | `O` | Open in $EDITOR |
+| `y` | Copy line | `Y` | Copy visible content |
 | `?` | Help | `q` | Quit |
+
+**Display toggles:**
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `L` | Toggle line numbers | `T` | Toggle timestamps |
+| `F` | Toggle errors-only filter | `f` | Toggle logs view |
+| `m` | Toggle mouse mode | `enter`/`space` | Toggle phase collapse |
 
 **Scrolling:** `j`/`k`, arrows, `PgUp`/`PgDn`, `Ctrl+U`/`Ctrl+D`, `g`/`G` (top/bottom)
 
@@ -112,6 +120,7 @@ Launch with `xcbolt` or `xcbolt tui`. The interface has three tabs:
 | `xcbolt init` | Interactive setup wizard |
 | `xcbolt context` | Show project context (schemes, destinations) |
 | `xcbolt doctor` | Validate Xcode environment |
+| `xcbolt config` | Show current config (`--edit` to open in $EDITOR, `--migrate` to upgrade schema) |
 
 ### Simulator Management
 
@@ -158,6 +167,12 @@ xcbolt logs --predicate 'process == "MyApp"'
 
 # List tests without running
 xcbolt test --list
+
+# Run specific tests (format: <Target>/<Class>/<testMethod>)
+xcbolt test --only "MyAppTests/LoginTests/testLoginSuccess"
+
+# Skip specific tests
+xcbolt test --skip "MyAppTests/SlowTests"
 ```
 
 ---
@@ -178,6 +193,7 @@ xcbolt --json test | jq '.type'
 | Type | Description |
 |------|-------------|
 | `log` | Build output line |
+| `log_raw` | Raw (unformatted) build output line |
 | `error` | Error message |
 | `warning` | Warning message |
 | `result` | Operation result with data |
@@ -197,7 +213,7 @@ Running `xcbolt init` creates `.xcbolt/config.json`:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "workspace": "MyApp.xcworkspace",
   "scheme": "MyApp",
   "configuration": "Debug",
@@ -208,10 +224,14 @@ Running `xcbolt init` creates `.xcbolt/config.json`:
     "id": "...",
     "name": "iPhone 16 Pro"
   },
+  "derivedDataPath": ".xcbolt/DerivedData",
+  "resultBundlesPath": ".xcbolt/Results",
   "xcodebuild": {
     "logFormat": "auto",
     "logFormatArgs": []
-  }
+  },
+  "launch": {},
+  "tui": {}
 }
 ```
 
@@ -221,7 +241,11 @@ Running `xcbolt init` creates `.xcbolt/config.json`:
 | `scheme` | Build scheme name |
 | `configuration` | Build configuration (`Debug` / `Release`) |
 | `destination` | Target simulator/device/local destination across Apple platforms |
+| `derivedDataPath` | Custom derived data path (default: `.xcbolt/DerivedData`) |
+| `resultBundlesPath` | Custom result bundles path (default: `.xcbolt/Results`) |
 | `xcodebuild.logFormat` | Log formatter: `auto`, `xcpretty`, `xcbeautify`, `raw` |
+| `launch` | Launch options: env vars, unified/system log streaming, console log levels |
+| `tui` | TUI options: `showAllLogs` |
 
 ### Destination Flags
 
@@ -294,7 +318,8 @@ xcbolt --json build          # Structured output
 ```bash
 xcbolt test --list           # Enumerate available tests
 xcbolt --json test           # Run with structured output
-xcbolt test --only "Tests/MyTest/testMethod"  # Filter tests
+xcbolt test --only "MyAppTests/MyTest/testMethod"  # Filter tests (Target/Class/method)
+xcbolt test --skip "MyAppTests/SlowTests"          # Skip tests
 ```
 
 **Environment validation:**
@@ -317,9 +342,10 @@ interface Event {
   version: number;
   timestamp: string;
   command: string;
-  type: "log" | "error" | "warning" | "result" | "status";
+  type: "log" | "log_raw" | "error" | "warning" | "result" | "status";
   message?: string;
   level?: "info" | "warn" | "error";
+  code?: string;     // Machine-readable event code
   error?: {
     code: string;
     message: string;
