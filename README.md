@@ -7,6 +7,10 @@
 ![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey?logo=apple)
 ![Homebrew](https://img.shields.io/badge/Homebrew-vburojevic%2Ftap-FBB040?logo=homebrew)
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="xcbolt TUI" width="790">
+</p>
+
 ---
 
 ## Highlights
